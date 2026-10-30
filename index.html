@@ -18,7 +18,7 @@
 <script>
 /* Online version: the website's requests ("/health", "/predict/12lead", ...) are answered by the
    NT-Sense engine running in this browser (worker.js). Nothing is uploaded anywhere. */
-window.NT_PRIVATE = true; /*NT_PRIVATE*/
+window.NT_PRIVATE = false; /*NT_PRIVATE*/
 (function () {
   /* Private link: the key is after "#k=" (the browser never sends that part to any server).
      It is moved out of the address bar, so copying the address does not copy the key. */
@@ -75,7 +75,7 @@ window.NT_PRIVATE = true; /*NT_PRIVATE*/
     if (typeof url !== "string" || !url.startsWith("/")) return real(url, opt);
     if (url === "/health") {
       const r = await call("health");
-      if (r.locked) { locked("key"); return new Promise(() => {}); }
+      if (r.locked) { locked(key ? "key" : ""); return new Promise(() => {}); }
       if (r.ok) call("warm");                          // start downloading the networks now
       return r.ok ? json(r.out) : json({detail: r.detail}, 500);
     }
@@ -943,6 +943,322 @@ dialog#evidence[open]{display:flex;flex-direction:column}
 /* phones: the tab bar scrolls sideways; fade its right edge until the end is reached, and keep the chosen tab in view */
 addEventListener("scroll", e => { const b = e.target; if (b.classList && b.classList.contains("tabbar")) b.classList.toggle("at-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 4); }, true);
 addEventListener("click", e => { const t = e.target.closest && e.target.closest(".tabbar [role=tab]"); if (t) t.scrollIntoView({block: "nearest", inline: "center", behavior: "smooth"}); }, true);
+</script>
+<script>/* phones get their own two-screen layout (phone.css, phone.js); the loading screen stays the same */
+if (matchMedia("(max-width: 760px)").matches) document.documentElement.classList.add("m-ui");</script>
+<style>
+/* ======================= NT-Sense on a phone =======================
+   Two screens for one thumb: "the patient" (demo patients first, then your own ECG, Analyse always
+   in reach) and "the result" (the story animation in full view, then the result with its tabs at
+   the bottom). The loading screen (#splash) is not touched. Everything is scoped to html.m-ui,
+   which is set only when the page opens on a narrow screen. */
+.m-ui{--m-page:#F7F1F2;--m-card:#FFFDFD;--m-line:#ECDDE0;--m-dock:rgba(255,253,253,.94);--m-ink3:#8A7478}
+.m-ui body{background:var(--m-page);font-size:16.5px;line-height:1.55;padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+.m-ui.m-res body{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
+.m-ui .wrap{padding:0 14px}
+.m-ui .card{background:var(--m-card);border-color:var(--m-line);border-radius:18px}
+
+/* ---- header: one slim row; the menu holds the three guides and the sound */
+.m-ui header .trace{height:18px;opacity:.75}
+.m-ui .bar{flex-wrap:nowrap;gap:8px;padding:10px 14px 18px}
+.m-ui .brand{gap:9px;min-width:0}
+.m-ui .brand svg{width:30px;height:30px}
+.m-ui .brand b{font-size:25px}
+.m-ui .brand small{display:none}
+.m-ui header #tour-open,.m-ui header #ev-open,.m-ui header #about-open,.m-ui header #sound-btn{display:none}
+.m-hbtn{flex:none;display:inline-flex;align-items:center;gap:6px;height:40px;min-width:40px;padding:0 12px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:#fff;font:600 14.5px/1 var(--text);cursor:pointer}
+.m-hbtn svg{width:18px;height:18px;flex:none}
+.m-hbtn.icon{padding:0;justify-content:center}
+.m-ui:not(.m-res) .m-back{display:none}
+
+/* ---- the patient screen */
+.m-ui main{display:block;padding:14px 0 0}
+.m-ui .form{padding:0;border:0;background:transparent;overflow:visible}
+.m-ui.m-res section.form{display:none}
+.m-ui:not(.m-res) #results{display:none}
+.m-top{display:flex;flex-direction:column;gap:14px;margin-bottom:18px}
+.m-ui .m-top .seg{align-self:stretch;background:#EFE3E5;border:0;border-radius:14px;padding:4px}
+.m-ui .m-top .seg button{flex:1;color:var(--ink2);min-height:44px;font-size:15px}
+.m-ui .m-top .seg button[aria-pressed="true"]{background:#fff;color:var(--blood-ink);box-shadow:0 1px 3px rgba(78,10,20,.12)}
+.m-h{margin:0;font-size:19px;line-height:1.25;color:var(--ink)}
+.m-sub{margin:2px 0 0;font-size:14.5px;color:var(--muted)}
+.m-demos{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;margin:0 -14px;padding:4px 14px 10px;scrollbar-width:none}
+.m-demos::-webkit-scrollbar{display:none}
+.m-card{flex:none;width:min(78vw,300px);scroll-snap-align:start;text-align:left;border:1.5px solid var(--m-line);background:var(--m-card);
+  border-radius:18px;padding:0 0 14px;cursor:pointer;color:var(--ink);font:inherit;overflow:hidden;transition:border-color .25s,box-shadow .25s}
+.m-card[aria-pressed="true"]{border-color:var(--teal);box-shadow:0 0 0 3px rgba(11,140,128,.16)}
+.m-strip{display:block;width:100%;height:74px;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid-minor) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor) 1px,transparent 1px);background-size:10px 10px;
+  border-bottom:1px solid var(--m-line)}
+.m-strip path{fill:none;stroke:var(--blood-ink);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.m-card[aria-pressed="true"] .m-strip path{stroke:var(--teal-deep);animation:m-sweep 1.3s cubic-bezier(.3,.6,.3,1) both}
+@keyframes m-sweep{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.m-card .t{display:block;margin:12px 16px 0;font-weight:700;font-size:16.5px;line-height:1.3}
+.m-card .p{display:block;margin:3px 16px 0;font-size:14px;color:var(--muted)}
+.m-card .s{display:block;margin:6px 16px 0;font-size:14px;color:var(--ink2);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.m-own{margin:6px 0 10px}
+.m-ui .steps{background:var(--m-card);border:1px solid var(--m-line);border-radius:18px;overflow:hidden}
+.m-ui .step-head{padding:16px 16px;min-height:60px}
+.m-ui .step-body{padding:0 16px 18px}
+.m-ui .actions{border:0;background:transparent;padding:14px 2px 0}
+.m-ui #go,.m-ui #demo-box,.m-ui .actions .alt{display:none}
+.m-ui .actions .err{display:none!important}
+.m-ui .demo-info{background:var(--m-card);border-color:var(--m-line);border-radius:14px}
+
+/* ---- the dock: Analyse is always under the thumb */
+.m-dock{position:fixed;left:0;right:0;bottom:0;z-index:60;padding:10px 14px calc(12px + env(safe-area-inset-bottom));
+  background:var(--m-dock);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-top:1px solid var(--m-line);
+  display:flex;flex-direction:column;gap:8px}
+.m-ui.m-res .m-dock{display:none}
+.m-dock .row{display:flex;gap:8px}
+.m-go{flex:1;display:flex;align-items:center;justify-content:center;gap:10px;min-height:54px;border:0;border-radius:16px;background:var(--blood);color:#fff;
+  font:700 17.5px/1 var(--text);cursor:pointer;box-shadow:0 6px 18px rgba(122,20,36,.25);transition:transform .12s,background-color .2s}
+.m-go:active{transform:scale(.98)}
+.m-go:disabled{background:#B9868E;box-shadow:none}
+.m-go svg{width:22px;height:22px}
+.m-go:not(:disabled) svg{animation:lubdub 1.1s ease-in-out infinite}
+.m-last{flex:none;min-height:54px;padding:0 16px;border-radius:16px;border:1.5px solid var(--line2);background:#fff;color:var(--blood-ink);font:600 15px/1.2 var(--text);cursor:pointer}
+.m-err{margin:0;background:var(--high-soft);color:var(--high);border-radius:12px;padding:10px 12px;font-size:14.5px;line-height:1.4}
+
+/* ---- the result screen */
+/* the screen rises in; the bottom bar is left out (a moving parent would carry the fixed bar with it) */
+.m-ui.m-res #results > :not(.tabbar){animation:m-rise .5s cubic-bezier(.2,.8,.2,1) both}
+@keyframes m-rise{from{opacity:0;transform:translateY(28px)}}
+.m-ui .results{gap:12px}
+.m-ui .theatre{border-radius:18px}
+.m-ui .th-top{padding:12px 14px}
+.m-ui .th-scene{border-right:0;border-bottom:1px solid var(--line);padding:6px}
+.m-ui .th-scene svg{max-height:34vh}
+.m-ui .th-chat{min-height:0;max-height:none;height:34vh}
+.m-ui .msg{font-size:15px}
+
+/* the result tabs become a bottom bar */
+.m-ui #results .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:60;margin:0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));
+  display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;overflow:visible;border-top:1px solid var(--m-line);border-bottom:0;
+  background:var(--m-dock);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);-webkit-mask-image:none;mask-image:none}
+.m-ui #results .tabbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:56px;padding:6px 2px;margin:0;
+  border:0;border-radius:12px;background:transparent;color:var(--m-ink3);font-size:12.5px;font-weight:700;line-height:1.1;white-space:nowrap}
+.m-ui #results .tabbar button[aria-selected="true"]{color:var(--blood-ink);background:var(--blood-soft)}
+.m-ui #results .tabbar button svg{width:22px;height:22px}
+.m-ui #results .tabbar .ink{top:0;bottom:auto;height:3px}
+
+/* ---- the menu sheet */
+.m-scrim{position:fixed;inset:0;z-index:90;background:rgba(42,20,24,.38);opacity:0;transition:opacity .25s}
+.m-sheet{position:fixed;left:0;right:0;bottom:0;z-index:91;background:var(--m-card);border-radius:22px 22px 0 0;padding:10px 14px calc(18px + env(safe-area-inset-bottom));
+  transform:translateY(105%);transition:transform .32s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 40px rgba(42,20,24,.2)}
+.m-sheet.open{transform:none}.m-scrim.open{opacity:1}
+.m-sheet .grab{width:42px;height:5px;border-radius:5px;background:var(--line2);margin:0 auto 12px}
+.m-sheet button{display:flex;align-items:center;gap:14px;width:100%;text-align:left;border:0;background:transparent;border-radius:14px;padding:12px 10px;
+  font:inherit;color:var(--ink);cursor:pointer;min-height:60px}
+.m-sheet button:active{background:var(--m-page)}
+.m-sheet .ic{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--blood-soft);color:var(--blood)}
+.m-sheet .ic svg{width:22px;height:22px}
+.m-sheet b{display:block;font-size:16.5px}
+.m-sheet small{display:block;font-size:14px;color:var(--muted);margin-top:1px}
+
+.m-ui :focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){
+  .m-ui.m-res #results > :not(.tabbar),.m-card[aria-pressed="true"] .m-strip path,.m-go:not(:disabled) svg{animation:none}
+  .m-sheet,.m-scrim{transition:none}
+}
+
+/* the result: the numbers come first, the beating heart is smaller and sits after them */
+.m-ui .read-top{gap:14px}
+.m-ui .read-top .liveheart{grid-row:auto;order:5}
+.m-ui .read-top .lh-stage{zoom:.66}
+</style>
+<script>
+/* NT-Sense on a phone: builds the two-screen layout (see phone.css). Runs only when html.m-ui is set.
+   It only moves and mirrors the page's own controls, so every calculation stays the same. */
+(function () {
+  if (!document.documentElement.classList.contains("m-ui")) return;
+  const $ = s => document.querySelector(s);
+  const H = document.documentElement;
+  const svg = (d, extra) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra || ""}>${d}</svg>`;
+  const ICON = {
+    menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+    back: svg('<path d="M15 5l-7 7 7 7"/>'),
+    tour: svg('<circle cx="12" cy="12" r="9"/><path d="M10 8.5l6 3.5-6 3.5z" fill="currentColor"/>'),
+    ev: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>'),
+    sound: svg('<path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7"/>'),
+    res: svg('<path d="M12 20s-7-4.4-7-9.6C5 7.9 6.8 6 9 6c1.3 0 2.3.7 3 1.7.7-1 1.7-1.7 3-1.7 2.2 0 4 1.9 4 4.4C19 15.6 12 20 12 20z"/>'),
+    ecg: svg('<path d="M2 13h4l2-5 3 10 3-12 2 7h6"/>'),
+    whatif: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
+    cmp: svg('<path d="M9 3v6l-4 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-4-9V3M8 3h8"/>')
+  };
+  const TABS = {"tab-res": ["Result", ICON.res], "tab-ecg": ["ECG", ICON.ecg], "tab-whatif": ["What if?", ICON.whatif], "tab-cmp": ["Blood tests", ICON.cmp]};
+  const GO_HEART = '<svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 31.5S4.5 23.4 4.5 13.6C4.5 9.3 7.6 6.5 11.2 6.5c2.9 0 5.2 1.8 6.8 4 1.6-2.2 3.9-4 6.8-4 3.6 0 6.7 2.8 6.7 7.1C31.5 23.4 18 31.5 18 31.5z" fill="currentColor"/></svg>';
+
+  function setView(res) {
+    const was = H.classList.contains("m-res");
+    if (was === res) return;
+    H.classList.toggle("m-res", res);
+    window.scrollTo(0, 0);
+    if (!res) refreshLast();
+  }
+  function refreshLast() { const b = $(".m-last"); if (b) b.hidden = !$("#results .tabbar"); }
+
+  // ---------------------------------------------------------------- header
+  function buildHeader() {
+    const bar = $("header .bar");
+    const back = document.createElement("button");
+    back.type = "button"; back.className = "m-hbtn m-back"; back.innerHTML = ICON.back + "Patient";
+    back.setAttribute("aria-label", "Back to the patient");
+    back.onclick = () => setView(false);
+    const menu = document.createElement("button");
+    menu.type = "button"; menu.className = "m-hbtn icon m-menu"; menu.innerHTML = ICON.menu;
+    menu.setAttribute("aria-label", "Menu"); menu.setAttribute("aria-haspopup", "dialog");
+    menu.onclick = openSheet;
+    bar.appendChild(back); bar.appendChild(menu);
+  }
+
+  // ---------------------------------------------------------------- menu sheet
+  let sheet, scrim;
+  function buildSheet() {
+    scrim = document.createElement("div"); scrim.className = "m-scrim"; scrim.hidden = true;
+    sheet = document.createElement("div"); sheet.className = "m-sheet"; sheet.hidden = true;
+    sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-modal", "true"); sheet.setAttribute("aria-label", "Menu");
+    const items = [
+      ["tour-open", ICON.tour, "How it works", "A 60-second tour of the idea"],
+      ["ev-open", ICON.ev, "How well does it work?", "Accuracy on patients the model never saw"],
+      ["about-open", ICON.about, "About the model", "Data, method and limits"],
+      ["sound-btn", ICON.sound, "Sound", ""]
+    ];
+    sheet.innerHTML = '<div class="grab" aria-hidden="true"></div>' + items.map(([id, ic, t, s]) =>
+      `<button type="button" data-for="${id}"><span class="ic">${ic}</span><span><b>${t}</b><small${id === "sound-btn" ? ' class="snd"' : ""}>${s}</small></span></button>`).join("");
+    sheet.addEventListener("click", e => {
+      const b = e.target.closest("button[data-for]"); if (!b) return;
+      const target = document.getElementById(b.dataset.for);
+      if (b.dataset.for === "sound-btn") { target.click(); soundLabel(); return; }
+      closeSheet(); setTimeout(() => target.click(), 180);
+    });
+    scrim.onclick = closeSheet;
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
+    document.body.append(scrim, sheet);
+  }
+  function soundLabel() { const on = $("#sound-btn").getAttribute("aria-pressed") !== "false"; sheet.querySelector(".snd").textContent = on ? "On: tap to switch off" : "Off: tap to switch on"; }
+  function openSheet() {
+    soundLabel(); scrim.hidden = sheet.hidden = false;
+    requestAnimationFrame(() => { scrim.classList.add("open"); sheet.classList.add("open"); sheet.querySelector("button").focus({preventScroll: true}); });
+  }
+  function closeSheet() {
+    scrim.classList.remove("open"); sheet.classList.remove("open");
+    setTimeout(() => { scrim.hidden = sheet.hidden = true; }, 320);
+    $(".m-menu").focus({preventScroll: true});
+  }
+
+  // ---------------------------------------------------------------- patient screen: mode switch + demo patients
+  function buildTop() {
+    const form = $("section.form"), top = document.createElement("div");
+    top.className = "m-top";
+    top.innerHTML = `<div class="m-demo-wrap" hidden><h2 class="m-h">Try a demo patient</h2><p class="m-sub">Real ECGs with invented patient details. Swipe to see more.</p></div>
+      <div class="m-demos" role="group" aria-label="Demo patients" hidden></div>
+      <div class="m-own"><h2 class="m-h">Or use your own ECG</h2></div>`;
+    form.prepend(top);
+    top.querySelector(".m-own").after($("header .seg"));
+    const sel = $("#demo");
+    const fill = () => { if (sel.options.length > 1 && !top.querySelector(".m-card")) buildCards(sel); };
+    new MutationObserver(fill).observe(sel, {childList: true}); fill();
+    sel.addEventListener("change", () => markCard(sel.value));
+    $("#mmon").addEventListener("click", () => markCard(""));          // demo patients are 12-lead ECGs
+  }
+  function caseInfo(id) { try { return (typeof demoCases !== "undefined" ? demoCases : []).find(c => c.id === id) || null; } catch (e) { return null; } }
+  function buildCards(sel) {
+    const box = $(".m-demos");
+    for (const o of sel.options) {
+      if (!o.value) continue;
+      const c = caseInfo(o.value);
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "m-card"; b.dataset.id = o.value; b.setAttribute("aria-pressed", "false");
+      const who = c ? `${c.age} years, ${String(c.sex_male) === "1" ? "male" : "female"}` : "";
+      b.innerHTML = `<svg class="m-strip" viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" stroke-dasharray="1" d=""/></svg>
+        <span class="t">${esc(o.textContent)}</span>${who ? `<span class="p">${who}</span>` : ""}${c && c.story ? `<span class="s">${esc(c.story)}</span>` : ""}`;
+      b.onclick = () => { sel.value = o.value; sel.dispatchEvent(new Event("change", {bubbles: true})); };
+      box.appendChild(b);
+    }
+    box.hidden = false; $(".m-demo-wrap").hidden = false;
+    const io = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); drawStrip(e.target); } }), {root: box, rootMargin: "0px 200px"}) : null;
+    box.querySelectorAll(".m-card").forEach(b => io ? io.observe(b) : drawStrip(b));
+    markCard(sel.value);
+  }
+  function markCard(id) {
+    document.querySelectorAll(".m-card").forEach(b => {
+      const on = b.dataset.id === id;
+      if (on && b.getAttribute("aria-pressed") !== "true") { const p = b.querySelector("path"); p.style.animation = "none"; p.getBoundingClientRect(); p.style.animation = ""; }
+      b.setAttribute("aria-pressed", on);
+    });
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
+
+  // the card's own ECG: about 3 seconds of lead II, read from the start of the demo file
+  async function drawStrip(card) {
+    try {
+      const id = card.dataset.id;
+      const hea = (await (await fetch("demo/" + id + ".hea")).text()).trim().split(/\r?\n/).filter(l => l && l[0] !== "#");
+      const [, nSig, fs] = hea[0].split(/\s+/).map(Number);
+      const names = hea.slice(1, 1 + nSig).map(l => l.trim().split(/\s+/).pop());
+      const ch = Math.max(0, names.findIndex(n => n.toUpperCase() === "II"));
+      const n = Math.round(Math.min(3, 3) * fs), bytes = n * nSig * 2;
+      const r = await fetch("demo/" + id + ".dat", {headers: {Range: "bytes=0-" + (bytes - 1)}});
+      const buf = await r.arrayBuffer();
+      const dv = new DataView(buf), m = Math.min(n, Math.floor(buf.byteLength / (nSig * 2)));
+      const v = new Float32Array(m);
+      for (let i = 0; i < m; i++) v[i] = dv.getInt16((i * nSig + ch) * 2, true);
+      // remove slow drift (1-second moving median approximated by a moving mean), then scale robustly
+      const w = Math.max(1, Math.round(fs * 0.6)), base = new Float32Array(m); let s = 0;
+      for (let i = 0; i < m + w; i++) { if (i < m) s += v[i]; if (i >= w) s -= v[i - w]; if (i >= Math.floor(w / 2) && i - Math.floor(w / 2) < m) base[i - Math.floor(w / 2)] = s / Math.min(w, i + 1); }
+      const x = v.map((a, i) => a - base[i]), srt = Array.from(x).sort((a, b) => a - b);
+      const lo = srt[Math.floor(m * 0.005)], hi = srt[Math.floor(m * 0.995)], span = Math.max(hi - lo, 1);
+      const step = Math.max(1, Math.floor(m / 300)); let d = "";
+      for (let i = 0, k = 0; i < m; i += step, k++) {
+        const y = 62 - (x[i] - lo) / span * 54;
+        d += (k ? "L" : "M") + (i / (m - 1) * 300).toFixed(1) + " " + Math.max(2, Math.min(68, y)).toFixed(1);
+      }
+      card.querySelector("path").setAttribute("d", d);
+    } catch (e) { /* the card still works without its picture */ }
+  }
+
+  // ---------------------------------------------------------------- the dock (Analyse) mirrors the page's own button
+  function buildDock() {
+    const dock = document.createElement("div"); dock.className = "m-dock";
+    dock.innerHTML = `<p class="m-err" role="alert" hidden></p><div class="row"><button type="button" class="m-last" hidden>Last result</button><button type="button" class="m-go"></button></div>`;
+    document.body.appendChild(dock);
+    const go = $("#go"), mgo = dock.querySelector(".m-go"), err = $("#err"), merr = dock.querySelector(".m-err");
+    const sync = () => { mgo.disabled = go.disabled; mgo.innerHTML = GO_HEART + "<span>" + esc(go.textContent.trim() || "Analyse ECG") + "</span>"; };
+    new MutationObserver(sync).observe(go, {attributes: true, childList: true, subtree: true}); sync();
+    mgo.onclick = () => go.click();
+    const syncErr = () => { const t = err.style.display !== "none" ? err.textContent.trim() : ""; merr.textContent = t; merr.hidden = !t; if (t) setView(false); };
+    new MutationObserver(syncErr).observe(err, {attributes: true, childList: true, characterData: true, subtree: true}); syncErr();
+    dock.querySelector(".m-last").onclick = () => setView(true);
+  }
+
+  // ---------------------------------------------------------------- result screen: follows what #results shows
+  function watchResults() {
+    const res = $("#results");
+    const decorate = () => {
+      res.querySelectorAll(".tabbar [role=tab]").forEach(t => {
+        if (t.dataset.m) return;
+        const [short, ic] = TABS[t.id] || [t.textContent.trim(), ICON.res];
+        t.dataset.m = "1"; t.setAttribute("aria-label", t.textContent.trim());
+        t.innerHTML = ic + "<span>" + esc(short) + "</span>";
+      });
+      if (typeof placeInk === "function") try { placeInk(); } catch (e) {}
+    };
+    const follow = () => {
+      if (res.querySelector(".theatre, .tabbar, .analysing")) setView(true);
+      else if (res.querySelector("#empty")) setView(false);
+      decorate(); refreshLast();
+    };
+    new MutationObserver(follow).observe(res, {childList: true});
+    res.addEventListener("click", e => { if (e.target.closest("[role=tab]")) window.scrollTo({top: 0, behavior: "smooth"}); });
+    follow();
+  }
+
+  function start() { buildHeader(); buildSheet(); buildTop(); buildDock(); watchResults(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();
 </script>
 </head>
 <body>
