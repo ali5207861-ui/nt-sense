@@ -59,28 +59,33 @@ function compare(o, x) {
     const hasHalf = Object.values(M.sets).some(s => s && s.files_f16);
     let pass = 0, n = 0; const t0 = performance.now();
     for (const half of hasHalf ? [false, true] : [false]) {
-    const eng = new E.Engine(M, F, bytes); eng.half = half;
+    // the same path as the website: worker.js and its helper workers (one per processor core)
+    const W = new Worker("worker.js"); let seq = 0; const wait = {};
+    W.onmessage = e => { if (e.data.id && wait[e.data.id]) { wait[e.data.id](e.data); delete wait[e.data.id]; } };
+    const call = (kind, x) => new Promise(ok => { const id = ++seq; wait[id] = ok; W.postMessage(Object.assign({id, kind}, x || {})); });
+    await call("key", {key: E.keyFromHash(location.hash), half});
     for (const c of T) {
       n++;
       const tr = rows.insertRow(); tr.innerHTML = `<td>${c.title}</td><td>${half ? "phones (float16)" : "computers (float32)"}</td><td>${c.kind}${c.form.creatinine ? " + labs" : ""}</td><td>…</td><td></td>`;
       await new Promise(r => setTimeout(r, 0));
       let res;
       try {
-        const [age, sex] = E.basics(c.form), inp = E.cleanInputs(c.form);
-        let o;
+        const form = Object.assign({}, c.form); delete form.csv;
+        let r;
         if (c.kind === "12lead") {
           const hea = await (await get(`demo/${c.id}.hea`)).text(), dat = await (await get(`demo/${c.id}.dat`)).arrayBuffer();
-          o = await eng.predict12(hea, dat, age, sex, inp);
+          r = await call("12lead", {form, files: {hea, dat}});
         } else {
-          const csv = await (await get(c.form.csv)).text();
-          o = await eng.predictMonitor(E.readCsvColumn(csv), parseFloat(c.form.fs), age, sex, inp);
+          r = await call("monitor", {form, files: {csv: await (await get(c.form.csv)).text()}});
         }
-        res = compare(o, c.expect);
+        if (!r.ok) throw new Error(r.detail);
+        res = compare(r.out, c.expect);
       } catch (e) { res = {bad: ["error: " + e.message], warn: []}; }
       const okk = !res.bad.length; if (okk) pass++;
       tr.cells[3].textContent = okk ? "PASS" : "FAIL"; tr.cells[3].className = okk ? "ok" : "bad";
       tr.cells[4].innerHTML = `<code>${res.bad.concat(res.warn).join("<br>") || "all values match"}</code>`;
     }
+    W.terminate();
     }
     const secs = ((performance.now() - t0) / 1000).toFixed(0);
     sum.textContent = pass === n ? `ALL PASSED: ${n} of ${n} runs match the PyTorch model (${secs} s)` : `${n - pass} of ${n} runs FAILED`;

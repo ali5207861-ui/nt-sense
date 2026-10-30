@@ -18,7 +18,7 @@
 <script>
 /* Online version: the website's requests ("/health", "/predict/12lead", ...) are answered by the
    NT-Sense engine running in this browser (worker.js). Nothing is uploaded anywhere. */
-window.NT_PRIVATE = true; /*NT_PRIVATE*/
+window.NT_PRIVATE = false; /*NT_PRIVATE*/
 (function () {
   /* Private link: the key is after "#k=" (the browser never sends that part to any server).
      It is moved out of the address bar, so copying the address does not copy the key. */
@@ -35,24 +35,30 @@ window.NT_PRIVATE = true; /*NT_PRIVATE*/
   const W = new Worker("worker.js");
   let seq = 0; const waiting = {};
   W.onmessage = e => {
-    if (e.data.progress) return showProgress(e.data.progress);
+    if (e.data.progress) return showBar("dl", "Downloading the model…", e.data.progress, 800);
+    if (e.data.computing) return showBar("calc", "Calculating on this device…", e.data.computing, 2500);
     const f = waiting[e.data.id]; delete waiting[e.data.id]; if (f) f(e.data);
   };
-  /* "Downloading the model 40%": the first visit downloads the networks (shown only if it takes a while) */
-  let pBox = null, pStart = 0;
-  function showProgress({done, total}) {
+  /* a small bar at the bottom: "Downloading the model 40%" on the first visit, and "Calculating on this
+     device" while the networks work (only if it takes a while, e.g. on a slower phone) */
+  const bars = {};
+  function showBar(kind, label, {done, total}, after) {
     if (!total || !document.body) return;
+    const b = bars[kind] || (bars[kind] = {start: performance.now(), el: null});
     const frac = Math.min(1, done / total);
-    if (!pStart) pStart = performance.now();
-    if (!pBox && frac < 1 && performance.now() - pStart > 800) {
-      pBox = document.createElement("div"); pBox.className = "nt-dl"; pBox.setAttribute("role", "status");
-      pBox.innerHTML = '<span>Downloading the model…</span><b>0%</b><i><u></u></i>';
-      document.body.appendChild(pBox);
+    if (frac < 1 && !b.el && performance.now() - b.start > after) {
+      b.el = document.createElement("div"); b.el.className = "nt-dl"; b.el.setAttribute("role", "status");
+      b.el.innerHTML = `<span>${label}</span><b>0%</b><i><u></u></i>`;
+      document.body.appendChild(b.el);
     }
-    if (!pBox) return;
-    pBox.querySelector("b").textContent = Math.floor(frac * 100) + "%";
-    pBox.querySelector("u").style.width = (frac * 100).toFixed(1) + "%";
-    if (frac >= 1) { pBox.classList.add("done"); setTimeout(() => pBox && pBox.remove(), 900); }
+    if (b.el) {
+      b.el.querySelector("b").textContent = Math.floor(frac * 100) + "%";
+      b.el.querySelector("u").style.width = (frac * 100).toFixed(1) + "%";
+    }
+    if (frac >= 1) {
+      const el = b.el; delete bars[kind];
+      if (el) { el.classList.add("done"); setTimeout(() => el.remove(), 900); }
+    }
   }
   const call = (kind, extra) => new Promise(ok => { const id = ++seq; waiting[id] = ok; W.postMessage(Object.assign({id, kind}, extra || {})); });
   const json = (o, status) => new Response(JSON.stringify(o), {status: status || 200, headers: {"Content-Type": "application/json"}});
@@ -62,7 +68,7 @@ window.NT_PRIVATE = true; /*NT_PRIVATE*/
   const q = new URLSearchParams(location.search);
   const half = q.has("half") || (!q.has("full") && (matchMedia("(pointer: coarse)").matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)));
   window.NT_HALF = half;
-  call("key", {key, half});
+  call("key", {key, half, threads: +q.get("threads") || 0});
   window.NT_ONLINE = true;
   window.fetch = async function (url, opt) {
     opt = opt || {};

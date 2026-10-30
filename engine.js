@@ -476,7 +476,12 @@ class Engine {
   async _load(name) {
     const d = this.M.sets[name];
     const [files, dtype] = this.variant(name);
-    const nets = await this.pool(files.map(f => async () => unpackNet(await this.load("model/" + f), d.n_tab, dtype)));
+    // this.remote (worker.js): the networks live in helper workers, one share per processor core
+    const nets = await this.pool(files.map((f, i) => async () => {
+      const buf = await this.load("model/" + f);
+      if (this.remote) { await this.remote.load(name, i, buf, d.n_tab, dtype); return {remote: i}; }
+      return unpackNet(buf, d.n_tab, dtype);
+    }));
     const s = Object.assign({}, d, {key: name, nets});
     if (name === "base") s.tab = (age, sex) => Float32Array.from([(age - 65) / 15, Number(sex)]);
     else s.tab = (age, sex, inp) => finalTab(age, sex, inp, d.stats, d.tab_names);
@@ -525,11 +530,15 @@ class Engine {
     return this._xs;
   }
   zCache(ms, i) { const k = ms.key + i; if (!this._z.has(k)) this._z.set(k, new Map()); return this._z.get(k); }
-  run(X, tabRow, mode, ms, wantSal) {
+  async run(X, tabRow, mode, ms, wantSal) {
     const nW = X.length, nM = ms.nets.length, preds = [];
     const xs = this.masked(X, mode);
-    const sal = wantSal ? new Float64Array(12 * N_OUT) : null;
-    ms.nets.forEach((net, ni) => {
+    let sal = wantSal ? new Float64Array(12 * N_OUT) : null;
+    if (this.remote) {
+      const r = await this.remote.run(ms.key, nM, xs, this._key, tabRow, mode, wantSal);
+      for (let ni = 0; ni < nM; ni++) preds.push(r.ys[ni].map(y => y * ms.y_sd + ms.y_mean));
+      if (wantSal) sal = r.sal;
+    } else ms.nets.forEach((net, ni) => {
       const row = [], zc = this.zCache(ms, ni);
       for (const xi of xs) {
         const r = netRun(net, xi, tabRow, mode, wantSal, zc);
@@ -609,12 +618,13 @@ class Engine {
   }
   async analyse(X, age, sex, mode, inp, fast) {
     const [ms, note, used] = await this.choose(inp);
-    const r = this.run(X, ms.tab(age, sex, inp || {}), mode, ms, !fast);
+    // the chosen model and, for the comparison, the base model: both at once (helper workers share the cores)
+    const base = ms.key !== "base" ? await this.set("base") : null;
+    const [r, rb] = await Promise.all([this.run(X, ms.tab(age, sex, inp || {}), mode, ms, !fast),
+                                       base && this.run(X, base.tab(age, sex, {}), mode, base, false)]);
     if (fast) r.sal = new Float64Array(12 * N_OUT);
     let compare = null;
-    if (ms.key !== "base") {
-      const base = await this.set("base");
-      const rb = this.run(X, base.tab(age, sex, {}), mode, base, false);
+    if (base) {
       const a = this.summary(rb.est, rb.spread, mode, base, {}), b = this.summary(r.est, r.spread, mode, ms, inp);
       for (const d of [a, b]) { delete d._est; delete d._q; }
       compare = {without_labs: a, with_labs: b};
