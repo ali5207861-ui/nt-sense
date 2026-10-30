@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>NT-Sense self-test</title>
+<style>
+:root{--ink:#1F1216;--muted:#6B5559;--ok:#0F6E66;--okbg:#E6F7F4;--bad:#9B1B2E;--badbg:#FCEDEF;--line:#EAD9DC}
+body{margin:0;background:#fff;color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 16px}
+h1{font-size:26px;margin:0 0 4px}p{color:var(--muted);margin:0 0 16px}
+#sum{font-size:20px;font-weight:700;padding:12px 16px;border-radius:10px;background:#F5F1F2;margin:12px 0}
+#sum.ok{background:var(--okbg);color:var(--ok)}#sum.bad{background:var(--badbg);color:var(--bad)}
+.wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted)}td.ok{color:var(--ok);font-weight:700}td.bad{color:var(--bad);font-weight:700}
+code{font-size:12.5px}
+</style>
+</head>
+<body><main>
+<h1>NT-Sense self-test</h1>
+<p>Runs every demo case through the browser engine and compares it with what the PyTorch model said on the computer that made this site (model/selftest.json).</p>
+<div id="sum">Running…</div>
+<div class="wrap"><table><thead><tr><th>Case</th><th>Mode</th><th>Result</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table></div>
+</main>
+<script src="engine.js"></script>
+<script>
+const E = window.NTEngine;
+const get = async p => { const r = await fetch(p); if (!r.ok) throw new Error(p + " not found (" + r.status + ")"); return r; };
+const rel = (a, b) => Math.abs(Math.log10(Math.max(a, 1)) - Math.log10(Math.max(b, 1)));
+function compare(o, x) {
+  const bad = [];
+  const near = (k, tol) => { if (Math.abs(o[k] - x[k]) > tol) bad.push(`${k} ${o[k]} vs ${x[k]}`); };
+  const same = k => { if (JSON.stringify(o[k]) !== JSON.stringify(x[k])) bad.push(`${k} ${JSON.stringify(o[k])} vs ${JSON.stringify(x[k])}`); };
+  same("model_used"); same("has_prior_ntprobnp"); same("n_windows");
+  if (rel(o.estimate_pg_ml, x.estimate_pg_ml) > 0.003) bad.push(`estimate ${o.estimate_pg_ml} vs ${x.estimate_pg_ml}`);
+  for (const k of ["range90_pg_ml", "range80_pg_ml"]) for (const i of [0, 1])
+    if (rel(o[k][i], x[k][i]) > 0.005) bad.push(`${k}[${i}] ${o[k][i]} vs ${x[k][i]}`);
+  near("prob_ge_300", 0.01); near("prob_ge_age_threshold", 0.01); near("typical_error_x", 0.011); near("network_spread_x", 0.01);
+  for (const [lead, v] of Object.entries(x.lead_importance)) if (Math.abs((o.lead_importance[lead] || 0) - v) > 0.02) bad.push(`lead ${lead} importance ${o.lead_importance[lead]} vs ${v}`);
+  if (x.compare_base_estimate && rel(o.compare.without_labs.estimate_pg_ml, x.compare_base_estimate) > 0.003) bad.push(`base estimate ${o.compare.without_labs.estimate_pg_ml} vs ${x.compare_base_estimate}`);
+  const qs = o.quality && o.quality.status;
+  if (qs !== x.quality_status) bad.push(`quality ${qs} vs ${x.quality_status}`);
+  // a 'side' or band can flip only when the value sits on a boundary: report, do not fail
+  const warn = [];
+  if (o.range90_vs_300 !== x.range90_vs_300) warn.push(`range side ${o.range90_vs_300} vs ${x.range90_vs_300} (boundary)`);
+  if (o.risk_band !== x.risk_band) warn.push(`band ${o.risk_band} vs ${x.risk_band} (boundary)`);
+  return {bad, warn};
+}
+(async () => {
+  const sum = document.getElementById("sum"), rows = document.getElementById("rows");
+  try {
+    const key = await E.importKey(E.keyFromHash(location.hash));        // private link: selftest.html#k=...
+    const bytes = async p => E.openBytes(await (await get(p)).arrayBuffer(), key);
+    const json = async p => JSON.parse(new TextDecoder().decode(await bytes(p)));
+    const M = await json("model/manifest.json"), F = await (await get("model/filters.json")).json();
+    const T = await json("model/selftest.json");
+    const eng = new E.Engine(M, F, bytes);
+    let pass = 0, n = 0; const t0 = performance.now();
+    for (const c of T) {
+      n++;
+      const tr = rows.insertRow(); tr.innerHTML = `<td>${c.title}</td><td>${c.kind}${c.form.creatinine ? " + labs" : ""}</td><td>…</td><td></td>`;
+      await new Promise(r => setTimeout(r, 0));
+      let res;
+      try {
+        const [age, sex] = E.basics(c.form), inp = E.cleanInputs(c.form);
+        let o;
+        if (c.kind === "12lead") {
+          const hea = await (await get(`demo/${c.id}.hea`)).text(), dat = await (await get(`demo/${c.id}.dat`)).arrayBuffer();
+          o = await eng.predict12(hea, dat, age, sex, inp);
+        } else {
+          const csv = await (await get(c.form.csv)).text();
+          o = await eng.predictMonitor(E.readCsvColumn(csv), parseFloat(c.form.fs), age, sex, inp);
+        }
+        res = compare(o, c.expect);
+      } catch (e) { res = {bad: ["error: " + e.message], warn: []}; }
+      const okk = !res.bad.length; if (okk) pass++;
+      tr.cells[2].textContent = okk ? "PASS" : "FAIL"; tr.cells[2].className = okk ? "ok" : "bad";
+      tr.cells[3].innerHTML = `<code>${res.bad.concat(res.warn).join("<br>") || "all values match"}</code>`;
+    }
+    const secs = ((performance.now() - t0) / 1000).toFixed(0);
+    sum.textContent = pass === n ? `ALL PASSED: ${n} of ${n} runs match the PyTorch model (${secs} s)` : `${n - pass} of ${n} runs FAILED`;
+    sum.className = pass === n ? "ok" : "bad";
+  } catch (e) { sum.textContent = "Could not run: " + e.message; sum.className = "bad"; }
+})();
+</script>
+</body>
+</html>

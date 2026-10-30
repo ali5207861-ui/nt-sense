@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>NT-Sense</title>
+<link rel="icon" href="icon.png">
+<style>
+:root{--bg:#16030A;--ink:#FFF5F6;--muted:rgba(255,245,246,.72);--teal:#2EE6C9;--card:rgba(255,255,255,.06);--line:rgba(46,230,201,.35)}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:grid;place-items:center;min-height:100vh;padding:24px 16px;
+  background:radial-gradient(900px 500px at 50% -10%,rgba(46,230,201,.16),transparent 70%),var(--bg)}
+main{max-width:460px;width:100%;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:32px 24px}
+img{width:72px;height:72px;border-radius:18px}
+h1{font-size:26px;margin:14px 0 6px;letter-spacing:.2px}
+h1 span{color:var(--teal)}
+p{color:var(--muted);margin:10px 0 0}
+.lock{display:inline-flex;align-items:center;gap:8px;margin-top:18px;padding:8px 14px;border-radius:999px;border:1px solid var(--line);color:var(--teal);font-weight:600;font-size:14px}
+.lock svg{width:16px;height:16px}
+</style>
+</head>
+<body>
+<main>
+  <img src="icon.png" alt="">
+  <h1>NT-<span>Sense</span></h1>
+  <p id="msg">This is a private demo. Please open it from the link or QR code you were given.</p>
+  <div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Private link only</div>
+  <p style="font-size:13.5px;margin-top:18px">A student research project, New Cairo STEM School, Egypt.</p>
+</main>
+<script>
+if (/[?&]why=key\b/.test(location.search))
+  document.getElementById("msg").textContent = "This link does not open NT-Sense (it may be old or incomplete). Please scan the QR code again or ask for the latest link.";
+</script>
+</body>
+</html>
