@@ -292,8 +292,22 @@ function qualityMonitor(F, lead2, fs) {
 //   4 blocks: convA (k7, stride s, p3) relu, convB (k7, s1, p3), skip (1x1 stride s) or identity, add, relu
 //   head: Linear(128+n_tab+1 -> 64) relu, Linear(64 -> 1)
 const ARCH = {stem: [12, 32, 15, 2, 7], blocks: [[32, 32, 1], [32, 64, 2], [64, 128, 2], [128, 128, 2]]};
-function unpackNet(buf, nTab) {
-  const f = new Float32Array(buf); let p = 0;
+// float16 -> float32 (step39 can store the weights as float16: half the download)
+let F16 = null;
+function f16ToF32(buf) {
+  if (!F16) {
+    F16 = new Float32Array(65536);
+    for (let h = 0; h < 65536; h++) {
+      const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, m = h & 1023;
+      F16[h] = s * (e === 0 ? m * 2 ** -24 : e === 31 ? (m ? NaN : Infinity) : (1 + m / 1024) * 2 ** (e - 15));
+    }
+  }
+  const u = new Uint16Array(buf), out = new Float32Array(u.length);
+  for (let i = 0; i < u.length; i++) out[i] = F16[u[i]];
+  return out;
+}
+function unpackNet(buf, nTab, dtype) {
+  const f = dtype === "f16" ? f16ToF32(buf) : new Float32Array(buf); let p = 0;
   const take = n => { const a = f.subarray(p, p + n); p += n; return a; };
   const conv = (cin, cout, k, s, pad) => ({cin, cout, k, s, pad, w: take(cout * cin * k), b: take(cout)});
   const [ci, co, k, s, pad] = ARCH.stem;
@@ -453,15 +467,32 @@ class Engine {
     this.device = "browser";
     this.hasFinal = !!manifest.sets.final;
   }
-  async set(name) {
-    if (this.sets[name]) return this.sets[name];
+  set(name) {
+    // one download per set, even when "warm" and an analysis ask for it at the same time
+    this.loading = this.loading || {};
+    if (!this.loading[name]) this.loading[name] = this._load(name).catch(e => { delete this.loading[name]; throw e; });
+    return this.loading[name];
+  }
+  async _load(name) {
     const d = this.M.sets[name];
-    const nets = [];
-    for (const f of d.files) nets.push(unpackNet(await this.load("model/" + f), d.n_tab));
+    const [files, dtype] = this.variant(name);
+    const nets = await this.pool(files.map(f => async () => unpackNet(await this.load("model/" + f), d.n_tab, dtype)));
     const s = Object.assign({}, d, {key: name, nets});
     if (name === "base") s.tab = (age, sex) => Float32Array.from([(age - 65) / 15, Number(sex)]);
     else s.tab = (age, sex, inp) => finalTab(age, sex, inp, d.stats, d.tab_names);
     return (this.sets[name] = s);
+  }
+  // phones and tablets (this.half) use the float16 copy when the export made one: half the download
+  variant(name) {
+    const d = this.M.sets[name];
+    return this.half && d.files_f16 ? [d.files_f16, "f16"] : [d.files, d.dtype || "f32"];
+  }
+  // run download jobs 4 at a time (faster on phones with a slow first byte), results in order
+  async pool(jobs, width = 4) {
+    const out = new Array(jobs.length); let next = 0;
+    const run = async () => { while (next < jobs.length) { const i = next++; out[i] = await jobs[i](); } };
+    await Promise.all(Array.from({length: Math.min(width, jobs.length)}, run));
+    return out;
   }
   health() {
     return {status: "ok", device: this.device, bigger_model: this.hasFinal ? "final" : null,

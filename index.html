@@ -34,11 +34,35 @@ window.NT_PRIVATE = true; /*NT_PRIVATE*/
   if (window.NT_PRIVATE && !key) { locked(); return; }
   const W = new Worker("worker.js");
   let seq = 0; const waiting = {};
-  W.onmessage = e => { const f = waiting[e.data.id]; delete waiting[e.data.id]; if (f) f(e.data); };
+  W.onmessage = e => {
+    if (e.data.progress) return showProgress(e.data.progress);
+    const f = waiting[e.data.id]; delete waiting[e.data.id]; if (f) f(e.data);
+  };
+  /* "Downloading the model 40%": the first visit downloads the networks (shown only if it takes a while) */
+  let pBox = null, pStart = 0;
+  function showProgress({done, total}) {
+    if (!total || !document.body) return;
+    const frac = Math.min(1, done / total);
+    if (!pStart) pStart = performance.now();
+    if (!pBox && frac < 1 && performance.now() - pStart > 800) {
+      pBox = document.createElement("div"); pBox.className = "nt-dl"; pBox.setAttribute("role", "status");
+      pBox.innerHTML = '<span>Downloading the model…</span><b>0%</b><i><u></u></i>';
+      document.body.appendChild(pBox);
+    }
+    if (!pBox) return;
+    pBox.querySelector("b").textContent = Math.floor(frac * 100) + "%";
+    pBox.querySelector("u").style.width = (frac * 100).toFixed(1) + "%";
+    if (frac >= 1) { pBox.classList.add("done"); setTimeout(() => pBox && pBox.remove(), 900); }
+  }
   const call = (kind, extra) => new Promise(ok => { const id = ++seq; waiting[id] = ok; W.postMessage(Object.assign({id, kind}, extra || {})); });
   const json = (o, status) => new Response(JSON.stringify(o), {status: status || 200, headers: {"Content-Type": "application/json"}});
   const real = window.fetch.bind(window);
-  call("key", {key});
+  /* phones and tablets download the float16 copy of the networks (half the size); computers the float32 one.
+     Add ?full or ?half to the address to choose by hand. */
+  const q = new URLSearchParams(location.search);
+  const half = q.has("half") || (!q.has("full") && (matchMedia("(pointer: coarse)").matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)));
+  window.NT_HALF = half;
+  call("key", {key, half});
   window.NT_ONLINE = true;
   window.fetch = async function (url, opt) {
     opt = opt || {};
@@ -892,6 +916,28 @@ dialog#evidence[open]{display:flex;flex-direction:column}
 .ev-pane .card{animation:fade .45s ease-out both}
 @media (max-width:600px){.ev-head{padding:16px 16px 0}.ev-body{padding:16px}.icons{grid-template-columns:repeat(25,1fr)}}
 </style>
+<style>
+/* online version: download progress */
+.nt-dl{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:100000;width:min(360px,calc(100vw - 32px));
+  background:#1F1216;color:#fff;border-radius:14px;padding:10px 14px 12px;box-shadow:0 8px 28px rgba(0,0,0,.28);
+  display:grid;grid-template-columns:1fr auto;gap:6px 10px;font:600 13.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif;transition:opacity .6s}
+.nt-dl b{color:#2EE6C9;font-variant-numeric:tabular-nums}
+.nt-dl i{grid-column:1/-1;height:5px;border-radius:5px;background:rgba(255,255,255,.18);overflow:hidden}
+.nt-dl u{display:block;height:100%;width:0;background:#2EE6C9;border-radius:5px;transition:width .3s}
+.nt-dl.done{opacity:0}
+/* phones */
+@media (max-width:760px){
+  .ecg-layout{grid-template-columns:1fr}
+  .qbar details summary{padding:10px 0;min-height:40px}
+  .tabbar{-webkit-mask-image:linear-gradient(90deg,#000 80%,transparent);mask-image:linear-gradient(90deg,#000 80%,transparent)}
+  .tabbar.at-end{-webkit-mask-image:none;mask-image:none}
+}
+</style>
+<script>
+/* phones: the tab bar scrolls sideways; fade its right edge until the end is reached, and keep the chosen tab in view */
+addEventListener("scroll", e => { const b = e.target; if (b.classList && b.classList.contains("tabbar")) b.classList.toggle("at-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 4); }, true);
+addEventListener("click", e => { const t = e.target.closest && e.target.closest(".tabbar [role=tab]"); if (t) t.scrollIntoView({block: "nearest", inline: "center", behavior: "smooth"}); }, true);
+</script>
 </head>
 <body>
 <header>
@@ -1168,6 +1214,7 @@ $("#example").onclick = async () => {
 };
 
 async function analyse(){
+  if (window.DEMO_LOADING) await window.DEMO_LOADING;
   showError("");
   const age = parseFloat($("#age").value);
   const sex = document.querySelector('input[name=sex]:checked');
@@ -2104,7 +2151,7 @@ const ATTRACT = {on: false, idle: null};
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 function armIdle(){
   clearTimeout(ATTRACT.idle);
-  if (!(window.CFG && CFG.exhibition) || !demoCases.length) return;
+  if (!(window.CFG && CFG.exhibition) || !demoCases.length || window.NT_ONLINE) return;
   ATTRACT.idle = setTimeout(startAttract, 60000);
 }
 ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => addEventListener(ev, () => { if (ATTRACT.on) stopAttract(); armIdle(); }, {capture: true, passive: true}));
@@ -2225,7 +2272,7 @@ async function runSplash(){
   document.body.insertAdjacentHTML("afterbegin", splashMarkup());
   if (!REDUCE) { SPLASH.mol = setInterval(splashMolecule, 650); }
   const soundOk = await SND.unlock();                     // works on its own when the launcher allows sound
-  if (soundOk) SND.introStart(); else $("#sp-hint").textContent = "This browser blocked the music. Click anywhere to play it, or start NT-Sense with step19_web.py so it opens in its own window with sound.";
+  if (soundOk) SND.introStart(); else $("#sp-hint").textContent = "Tap anywhere to play the music.";
   const firstGesture = () => { SND.init(); SND.unlock().then(ok => { if (ok && !SPLASH.done) { SND.introStart(); $("#sp-hint").textContent = ""; } }); };
   $("#splash").addEventListener("pointerdown", firstGesture, {once: true});
   await sleep(REDUCE ? 0 : 2600);
@@ -2741,7 +2788,7 @@ async function loadDemo(){
     info.hidden = false;
   } catch (e) { showError(e.message); }
 }
-$("#demo").onchange = loadDemo;
+$("#demo").onchange = () => (window.DEMO_LOADING = loadDemo());
 </script>
 </body>
 </html>

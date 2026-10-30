@@ -20,9 +20,9 @@ code{font-size:12.5px}
 </head>
 <body><main>
 <h1>NT-Sense self-test</h1>
-<p>Runs every demo case through the browser engine and compares it with what the PyTorch model said on the computer that made this site (model/selftest.json).</p>
+<p>Runs every demo case through the browser engine and compares it with what the PyTorch model said on the computer that made this site (model/selftest.json). Computers use the float32 networks; phones and tablets the float16 copy. Both are checked here.</p>
 <div id="sum">Running…</div>
-<div class="wrap"><table><thead><tr><th>Case</th><th>Mode</th><th>Result</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="wrap"><table><thead><tr><th>Case</th><th>Networks</th><th>Mode</th><th>Result</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table></div>
 </main>
 <script src="engine.js"></script>
 <script>
@@ -56,11 +56,13 @@ function compare(o, x) {
     const json = async p => JSON.parse(new TextDecoder().decode(await bytes(p)));
     const M = await json("model/manifest.json"), F = await (await get("model/filters.json")).json();
     const T = await json("model/selftest.json");
-    const eng = new E.Engine(M, F, bytes);
+    const hasHalf = Object.values(M.sets).some(s => s && s.files_f16);
     let pass = 0, n = 0; const t0 = performance.now();
+    for (const half of hasHalf ? [false, true] : [false]) {
+    const eng = new E.Engine(M, F, bytes); eng.half = half;
     for (const c of T) {
       n++;
-      const tr = rows.insertRow(); tr.innerHTML = `<td>${c.title}</td><td>${c.kind}${c.form.creatinine ? " + labs" : ""}</td><td>…</td><td></td>`;
+      const tr = rows.insertRow(); tr.innerHTML = `<td>${c.title}</td><td>${half ? "phones (float16)" : "computers (float32)"}</td><td>${c.kind}${c.form.creatinine ? " + labs" : ""}</td><td>…</td><td></td>`;
       await new Promise(r => setTimeout(r, 0));
       let res;
       try {
@@ -76,8 +78,9 @@ function compare(o, x) {
         res = compare(o, c.expect);
       } catch (e) { res = {bad: ["error: " + e.message], warn: []}; }
       const okk = !res.bad.length; if (okk) pass++;
-      tr.cells[2].textContent = okk ? "PASS" : "FAIL"; tr.cells[2].className = okk ? "ok" : "bad";
-      tr.cells[3].innerHTML = `<code>${res.bad.concat(res.warn).join("<br>") || "all values match"}</code>`;
+      tr.cells[3].textContent = okk ? "PASS" : "FAIL"; tr.cells[3].className = okk ? "ok" : "bad";
+      tr.cells[4].innerHTML = `<code>${res.bad.concat(res.warn).join("<br>") || "all values match"}</code>`;
+    }
     }
     const secs = ((performance.now() - t0) / 1000).toFixed(0);
     sum.textContent = pass === n ? `ALL PASSED: ${n} of ${n} runs match the PyTorch model (${secs} s)` : `${n - pass} of ${n} runs FAILED`;
