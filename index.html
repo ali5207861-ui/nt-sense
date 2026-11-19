@@ -18,7 +18,7 @@
 <script>
 /* Online version: the website's requests ("/health", "/predict/12lead", ...) are answered by the
    NT-Sense engine running in this browser (worker.js). Nothing is uploaded anywhere. */
-window.NT_PRIVATE = true; /*NT_PRIVATE*/
+window.NT_PRIVATE = false; /*NT_PRIVATE*/
 (function () {
   /* Private link: the key is after "#k=" (the browser never sends that part to any server).
      It is moved out of the address bar, so copying the address does not copy the key. */
@@ -921,6 +921,29 @@ dialog#evidence[open]{display:flex;flex-direction:column}
 .limits p{margin:6px 0 0;font-size:14.5px;line-height:1.55;color:var(--ink2)}
 .ev-pane .card{animation:fade .45s ease-out both}
 @media (max-width:600px){.ev-head{padding:16px 16px 0}.ev-body{padding:16px}.icons{grid-template-columns:repeat(25,1fr)}}
+
+/* ---- ECG reading tab (step 42) */
+.rd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px}
+.rd-tile{border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;background:var(--card)}
+.rd-tile.hi{border-color:#E9B8C0;background:var(--high-soft)}.rd-tile.mid{border-color:var(--warn-line);background:var(--mid-soft)}
+.rd-k{font-size:13.5px;color:var(--muted);font-weight:700}
+.rd-v{font:700 30px/1.05 var(--num);color:var(--ink)}.rd-v small{font:600 14px var(--text);color:var(--muted);margin-left:4px}
+.rd-flag{align-self:flex-start;font-size:12.5px;font-weight:700;border-radius:999px;padding:2px 9px;margin-top:2px}
+.rd-tile.hi .rd-flag{background:#fff;color:var(--high)}.rd-tile.mid .rd-flag{background:#fff;color:var(--mid)}
+.rd-e{font-size:12.5px;color:var(--muted);margin-top:4px}
+.rd-find{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.rd-row{display:grid;grid-template-columns:minmax(150px,1.2fr) 2fr 52px 74px;grid-template-areas:"nm bar pc lv";gap:4px 12px;align-items:center}
+.rd-row .nm{grid-area:nm}.rd-row .rd-bar{grid-area:bar}.rd-row .pc{grid-area:pc}.rd-row .lv{grid-area:lv}
+.rd-find .nm{font-size:15px;font-weight:600}.rd-find .pc{font:700 18px var(--num);text-align:right}
+.rd-bar{height:10px;border-radius:6px;background:#F1E8E9;overflow:hidden;padding:0;border:0;align-self:center}.rd-bar i{display:block;height:100%;border-radius:6px}
+.rd-find .lv{font-size:12.5px;font-weight:700;border-radius:999px;padding:2px 8px;text-align:center}
+.lv.likely{background:var(--high-soft);color:var(--high)}.lv.possible{background:var(--mid-soft);color:var(--mid)}.lv.unlikely{background:#F1E8E9;color:var(--muted)}
+.rd-pat{display:grid;grid-template-columns:1fr minmax(220px,300px);gap:6px 18px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.rd-pat:first-of-type{border-top:0}
+.rd-pat p{margin:0;font-size:14.5px;line-height:1.5;color:var(--ink2)}.rd-pat b{color:var(--ink)}
+.rd-pat svg{width:100%;height:44px;overflow:visible}
+.rd-none{color:var(--muted);font-size:14.5px;margin:8px 0 0}
+@media (max-width:700px){.rd-row{grid-template-columns:1fr 46px 74px;grid-template-areas:"nm pc lv" "bar bar bar"}.rd-pat{grid-template-columns:1fr}}
 </style>
 <style>
 /* online version: download progress */
@@ -1086,9 +1109,10 @@ if (matchMedia("(max-width: 760px)").matches) document.documentElement.classList
     res: svg('<path d="M12 20s-7-4.4-7-9.6C5 7.9 6.8 6 9 6c1.3 0 2.3.7 3 1.7.7-1 1.7-1.7 3-1.7 2.2 0 4 1.9 4 4.4C19 15.6 12 20 12 20z"/>'),
     ecg: svg('<path d="M2 13h4l2-5 3 10 3-12 2 7h6"/>'),
     whatif: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
-    cmp: svg('<path d="M9 3v6l-4 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-4-9V3M8 3h8"/>')
+    cmp: svg('<path d="M9 3v6l-4 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-4-9V3M8 3h8"/>'),
+    read: svg('<path d="M4 5h16v14H4z"/><path d="M4 12h3l1.5-3 2.5 6 2-4 1 1h6"/>')
   };
-  const TABS = {"tab-res": ["Result", ICON.res], "tab-ecg": ["ECG", ICON.ecg], "tab-whatif": ["What if?", ICON.whatif], "tab-cmp": ["Blood tests", ICON.cmp]};
+  const TABS = {"tab-res": ["Result", ICON.res], "tab-ecg": ["ECG", ICON.ecg], "tab-read": ["Reading", ICON.read], "tab-whatif": ["What if?", ICON.whatif], "tab-cmp": ["Blood tests", ICON.cmp]};
   const GO_HEART = '<svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 31.5S4.5 23.4 4.5 13.6C4.5 9.3 7.6 6.5 11.2 6.5c2.9 0 5.2 1.8 6.8 4 1.6-2.2 3.9-4 6.8-4 3.6 0 6.7 2.8 6.7 7.1C31.5 23.4 18 31.5 18 31.5z" fill="currentColor"/></svg>';
 
   function setView(res) {
@@ -1771,6 +1795,7 @@ function render(j, age){
   </div>`;
   const TABS = [["res", "Result", resultPane],
                 ["ecg", "Where the model looked", ecgPane]];
+  if (j.ecg_reading) TABS.push(["read", "ECG reading", readingPane(j)]);
   if (LASTREQ) TABS.push(["whatif", "What if?", whatIfPane(j)]);
   if (compareCard) TABS.push(["cmp", "With vs without blood tests", compareCard]);
   $("#results").innerHTML = `<div class="tabbar" role="tablist" aria-label="Result views"><span class="ink" aria-hidden="true"></span>${TABS.map(([id, name], i) =>
@@ -2367,6 +2392,52 @@ function wiTrack(lo, hi, est, color){
   return `<div class="wi-track"><div class="ax"></div><div class="ct" style="left:${pos(300)}%"></div>
     <div class="rg" style="left:${pos(lo)}%;width:${pos(hi) - pos(lo)}%;background:${color}"></div><div class="es" style="left:${pos(est)}%"></div></div>`;
 }
+// ---------------------------------------------------------------- ECG reading tab (step 42)
+function readingPane(j){
+  const R = j.ecg_reading, M = R.meta, mk = String(R.mode), mon = R.mode === 1;
+  const n0 = v => Math.round(v).toLocaleString("en-US");
+  const FLAG = {hr: v => v < 60 ? ["slow", "mid"] : v >= 100 ? ["fast", "hi"] : null,
+                pr: v => v > 200 ? ["long", "mid"] : null,
+                qrs: v => v >= 120 ? ["wide", "hi"] : v >= 100 ? ["borderline", "mid"] : null,
+                qtc: v => v >= 500 ? ["very long", "hi"] : v >= 450 ? ["long", "mid"] : null};
+  const tiles = ["hr", "pr", "qrs", "qt", "qtc", "qrs_axis", "t_axis"].filter(k => M.measurements[k] && (!mon || M.measurements[k].lead2)).map(k => {
+    const m = M.measurements[k], v = R.meas[k], f = FLAG[k] && FLAG[k](v), e = m.error[mk];
+    return `<div class="rd-tile ${f ? f[1] : ""}"><span class="rd-k">${m.name}</span><span class="rd-v">${n0(v)}<small>${m.unit}</small></span>${f ? `<span class="rd-flag">${f[0]}</span>` : ""}${e != null ? `<span class="rd-e">usual error ±${e} ${m.unit}</span>` : ""}</div>`;
+  }).join("");
+  const all = Object.entries(M.findings).filter(([k]) => k !== "dx_abnormal");
+  const ok = all.filter(([, f]) => (f.auroc[mk] || 0) >= M.min_auroc).map(([k, f]) => ({k, name: f.name, p: R.probs[k], au: f.auroc[mk]})).sort((a, b) => b.p - a.p);
+  const lvl = p => p >= .5 ? ["likely", "Likely"] : p >= .2 ? ["possible", "Possible"] : ["unlikely", "Unlikely"];
+  const rows = ok.map(f => { const [c, t] = lvl(f.p), pc = Math.round(f.p * 100);
+    return `<div class="rd-row"><span class="nm" title="Read with AUROC ${f.au.toFixed(3)} on test patients">${esc(f.name)}</span><div class="rd-bar"><i style="width:${Math.max(2, pc)}%;background:${c === "likely" ? "var(--high)" : c === "possible" ? "var(--mid)" : "#C9B5B9"}"></i></div><span class="pc">${pc}%</span><span class="lv ${c}">${t}</span></div>`; }).join("");
+  const hidden = all.length - ok.length;
+  // the NT-proBNP patterns that apply to this ECG (clear ones only)
+  const SHORT = {hr: ["Heart rate", "bpm"], qrs: ["QRS", "ms"], qtc: ["QTc", "ms"], pr: ["PR", "ms"]};
+  const inBand = (v, b) => v >= b[0] && (b[1] == null || v < b[1]);
+  const hits = M.patterns.filter(p => p.clear && p.key !== "dx_abnormal").filter(p => {
+    if (p.band) return SHORT[p.key] && (!mon || M.measurements[p.key].lead2) && inBand(R.meas[p.key], p.band);
+    return (M.findings[p.key].auroc[mk] || 0) >= M.min_auroc && R.probs[p.key] >= .5;
+  }).sort((a, b) => Math.abs(Math.log(b.ratio)) - Math.abs(Math.log(a.ratio))).slice(0, 5);
+  const X = v => 8 + 284 * (Math.log10(Math.min(30000, Math.max(30, v))) - Math.log10(30)) / 3;
+  const dumb = p => { const a = X(p.median_without), b = X(p.median_with), up = p.ratio > 1, c = up ? "var(--high)" : "var(--teal)";
+    return `<svg viewBox="0 0 300 44" role="img" aria-label="Median NT-proBNP ${n0(p.median_with)} with, ${n0(p.median_without)} without"><line x1="8" x2="292" y1="18" y2="18" stroke="var(--line2)"/><line x1="${X(300)}" x2="${X(300)}" y1="8" y2="28" stroke="var(--blood)" stroke-dasharray="3 3"/><text x="${X(300)}" y="40" font-size="11" text-anchor="middle" fill="var(--blood)">300</text><line x1="${a}" x2="${b}" y1="18" y2="18" stroke="${c}" stroke-width="3"/><circle cx="${a}" cy="18" r="5" fill="#B9A6AA"/><circle cx="${b}" cy="18" r="6" fill="${c}"/><text x="${b}" y="8" font-size="11.5" font-weight="700" text-anchor="middle" fill="${c}">${n0(p.median_with)}</text><text x="${a}" y="40" font-size="11" text-anchor="middle" fill="var(--muted)">${n0(p.median_without)}</text></svg>`; };
+  const sent = p => {
+    if (p.band) { const [nm, u] = SHORT[p.key], low = p.key === "hr" ? "a heart rate" : `a ${nm}`;
+      const txt = b => b[1] == null ? `of ${b[0]} ${u} or more` : b[0] <= 0 ? `under ${b[1]} ${u}` : `of ${b[0]}–${b[1] - 1} ${u}`;
+      return `<b>${nm} ${n0(R.meas[p.key])} ${u}.</b> In our test patients, those with ${low} ${txt(p.band)} had a median NT-proBNP of <b>${n0(p.median_with)} pg/mL</b>, against ${n0(p.median_without)} pg/mL with ${low} ${txt(p.ref)} (×${p.ratio.toFixed(2)}).`; }
+    return `<b>${esc(M.findings[p.key].name)}.</b> In our test patients, those with this finding had a median NT-proBNP of <b>${n0(p.median_with)} pg/mL</b>, against ${n0(p.median_without)} pg/mL without it (×${p.ratio.toFixed(2)}).`; };
+  const pats = hits.map(p => `<div class="rd-pat"><p>${sent(p)}</p>${dumb(p)}</div>`).join("");
+  return `<div class="card"><h2>What the network reads from this ECG</h2>
+      <p class="explain" style="margin-top:2px">${mon ? `Lead II, median of ${R.n_windows} ten-second window${R.n_windows > 1 ? "s" : ""}. Axes need several leads, so they are not shown.` : "The 12-lead ECG."} The same network NT-Sense was pretrained with (113,795 ECGs) measures it. "Usual error": median difference from the ECG machine on patients the network never saw.</p>
+      <div class="rd-grid">${tiles}</div></div>
+    <div class="card"><h2>ECG findings</h2>
+      <p class="explain" style="margin-top:2px">How sure the network is that the ECG machine would report each finding. It learned from the machine's automatic report, not from a cardiologist, so this is not a diagnosis.</p>
+      <div class="rd-find">${rows}</div>
+      <p class="explain">Shown: the findings it reads well ${mon ? "from lead II alone" : "from 12 leads"} (AUROC ${M.min_auroc.toFixed(2)} or more on test patients).${hidden ? ` ${hidden} other${hidden > 1 ? "s are" : " is"} hidden in this mode because ${hidden > 1 ? "they are" : "it is"} read less reliably.` : ""}</p></div>
+    <div class="card"><h2>How these patterns relate to NT-proBNP</h2>
+      ${pats || `<p class="rd-none">None of the patterns that clearly go with a higher or lower NT-proBNP was found on this ECG.</p>`}
+      <p class="explain">Grey dot: median NT-proBNP of test patients without the pattern; coloured dot: with it. These are links seen in our test patients, not proof of cause. The named patterns explain about ${Math.round(M.explained_pct)}% of what the ECG adds to NT-Sense's estimate; the rest comes from waveform details that the machine report has no name for.</p></div>`;
+}
+
 function whatIfPane(j){
   const given = k => { const e = LASTREQ.entries.find(([n]) => n === k); return e ? +e[1] : null; };
   const sex = given("sex_male");

@@ -40,6 +40,17 @@ function compare(o, x) {
   near("prob_ge_300", 0.01); near("prob_ge_age_threshold", 0.01); near("typical_error_x", 0.011); near("network_spread_x", 0.01);
   for (const [lead, v] of Object.entries(x.lead_importance)) if (Math.abs((o.lead_importance[lead] || 0) - v) > 0.02) bad.push(`lead ${lead} importance ${o.lead_importance[lead]} vs ${v}`);
   if (x.compare_base_estimate && rel(o.compare.without_labs.estimate_pg_ml, x.compare_base_estimate) > 0.003) bad.push(`base estimate ${o.compare.without_labs.estimate_pg_ml} vs ${x.compare_base_estimate}`);
+  if (x.reading) {                      // the ECG-reading network (step 42)
+    const r = o.ecg_reading;
+    if (!r) bad.push("ECG reading missing" + (o.ecg_reading_error ? ": " + o.ecg_reading_error : ""));
+    else {
+      for (const [k, v] of Object.entries(x.reading.probs)) if (Math.abs((r.probs[k] ?? -1) - v) > 0.02) bad.push(`reading ${k} ${r.probs[k]} vs ${v}`);
+      for (const [k, v] of Object.entries(x.reading.meas)) {
+        const d = /axis/.test(k) ? Math.abs(((r.meas[k] - v) % 360 + 540) % 360 - 180) : Math.abs(r.meas[k] - v);
+        if (!(d <= (/axis/.test(k) ? 3 : 2))) bad.push(`reading ${k} ${r.meas[k]} vs ${v}`);
+      }
+    }
+  }
   const qs = o.quality && o.quality.status;
   if (qs !== x.quality_status) bad.push(`quality ${qs} vs ${x.quality_status}`);
   // a 'side' or band can flip only when the value sits on a boundary: report, do not fail

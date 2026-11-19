@@ -87,7 +87,8 @@ async function init() {
   engine = new E.Engine(manifest, filters, bytes);
   engine.half = half;
   engine.remote = makeHelpers();
-  prog.total = Object.keys(manifest.sets).reduce((n, k) => n + (manifest.sets[k] ? engine.variant(k)[0].length : 0), 0);
+  prog.total = Object.keys(manifest.sets).reduce((n, k) => n + (manifest.sets[k] ? engine.variant(k)[0].length : 0), 0)
+             + (manifest.readout ? 1 : 0);                 // + the ECG-reading network
 }
 
 self.onmessage = async (ev) => {
@@ -100,7 +101,11 @@ self.onmessage = async (ev) => {
     await ready;
     let out;
     if (kind === "health") out = engine.health();
-    else if (kind === "warm") { await engine.set("base"); if (engine.hasFinal) await engine.set("final"); out = {ok: true}; }
+    else if (kind === "warm") {
+      await engine.set("base");                           // base first: the first result needs it
+      await Promise.all([engine.hasFinal && engine.set("final"), engine.readoutNet()]);
+      out = {ok: true};
+    }
     else if (kind === "12lead") {
       const [age, sex] = E.basics(form);
       const inp = E.cleanInputs(form);

@@ -417,6 +417,58 @@ function netRun(net, x, tab, mode, wantGrad, zc) {
   const gx = convBwd(net.stem, g, Lh, L);
   return {y, grad: gx};
 }
+// ---------------------------------------------------------------- ECG reading (step 30 pretraining network)
+/** Same encoder as the NT-proBNP networks, then a 129 -> 128 -> nOut head (findings, then measurements). */
+function unpackReadout(buf, nOut, dtype) {
+  const f = dtype === "f16" ? f16ToF32(buf) : new Float32Array(buf); let p = 0;
+  const take = n => { const a = f.subarray(p, p + n); p += n; return a; };
+  const conv = (cin, cout, k, s, pad) => ({cin, cout, k, s, pad, w: take(cout * cin * k), b: take(cout)});
+  const [ci, co, k, s, pad] = ARCH.stem;
+  const net = {stem: conv(ci, co, k, s, pad), blocks: [], nOut};
+  for (const [a, b, st] of ARCH.blocks) {
+    const blk = {A: conv(a, b, 7, st, 3), B: conv(b, b, 7, 1, 3), skip: null};
+    if (!(st === 1 && a === b)) blk.skip = conv(a, b, 1, st, 0);
+    net.blocks.push(blk);
+  }
+  net.W1 = take(128 * 129); net.b1 = take(128); net.W2 = take(nOut * 128); net.b2 = take(nOut);
+  if (p !== f.length) throw new Error(`reading network file has ${f.length} numbers, expected ${p}`);
+  return net;
+}
+/** Encoder only: the 128 averaged features of one (already masked) ECG. */
+function encodeOnly(net, x) {
+  let [h, Lh] = convFwd(net.stem, x, N_OUT); relu(h);
+  for (const blk of net.blocks) {
+    const [a, La] = convFwd(blk.A, h, Lh); relu(a);
+    const [m, Lm] = convFwd(blk.B, a, La);
+    const sk = blk.skip ? convFwd(blk.skip, h, Lh)[0] : h;
+    for (let i = 0; i < m.length; i++) m[i] = Math.max(0, m[i] + sk[i]);
+    h = m; Lh = Lm;
+  }
+  const z = new Float64Array(128);
+  for (let c = 0; c < 128; c++) { let s = 0; for (let l = 0; l < Lh; l++) s += h[c * Lh + l]; z[c] = s / Lh; }
+  return z;
+}
+function readoutRun(net, x, mode) {
+  const z = encodeOnly(net, x), feat = new Float64Array(129);
+  feat.set(z); feat[128] = mode;
+  const hid = new Float64Array(128);
+  for (let j = 0; j < 128; j++) { let s = net.b1[j]; for (let i = 0; i < 129; i++) s += net.W1[j * 129 + i] * feat[i]; hid[j] = s > 0 ? s : 0; }
+  const out = new Float64Array(net.nOut);
+  for (let k = 0; k < net.nOut; k++) { let s = net.b2[k]; for (let j = 0; j < 128; j++) s += net.W2[k * 128 + j] * hid[j]; out[k] = s; }
+  return out;
+}
+/** Findings: chance (mean over windows). Measurements: median over windows (axes: circular mean). As step18 _reading. */
+function readingOf(R, net, X, mode) {
+  const outs = X.map(x => readoutRun(net, applyMode(x, mode), mode));
+  const nb = R.n_findings, names = R.names, probs = {}, col = {};
+  for (let j = 0; j < nb; j++) probs[names[j]] = pyRound(mean(outs.map(o => 1 / (1 + Math.exp(-o[j])))), 3);
+  for (let j = nb; j < names.length; j++) col[names[j].slice(2)] = outs.map(o => o[j] * R.sd[j - nb] + R.mu[j - nb]);
+  const meas = {};
+  for (const k of ["hr", "pr", "qrs", "qt", "qtc"]) meas[k] = pyRound(median(col[k]), 1);
+  for (const ax of ["qrs_axis", "t_axis"])
+    meas[ax] = pyRound(Math.atan2(mean(col[ax + "_sin"]), mean(col[ax + "_cos"])) * 180 / Math.PI, 1);
+  return {mode, n_windows: X.length, probs, meas, meta: R.meta};
+}
 function applyMode(x, mode) {
   if (mode !== 1) return x;
   const y = new Float32Array(x.length);
@@ -486,6 +538,25 @@ class Engine {
     if (name === "base") s.tab = (age, sex) => Float32Array.from([(age - 65) / 15, Number(sex)]);
     else s.tab = (age, sex, inp) => finalTab(age, sex, inp, d.stats, d.tab_names);
     return (this.sets[name] = s);
+  }
+  /** the ECG-reading network (manifest.readout, made by step 42 + step 39); null when not exported */
+  readoutNet() {
+    const R = this.M.readout;
+    if (!R) return Promise.resolve(null);
+    if (!this._readout) {
+      const half = this.half && R.file_f16;
+      this._readout = this.load("model/" + (half ? R.file_f16 : R.file))
+        .then(buf => unpackReadout(buf, R.n_out, half ? "f16" : "f32"))
+        .catch(e => { this._readout = null; throw e; });
+    }
+    return this._readout;
+  }
+  async reading(X, mode) {
+    const net = await this.readoutNet();
+    if (!net) return null;
+    const key = mode + ":" + (this._key || "");      // "What if?" sends the same ECG again: read it once
+    if (this._readKey !== key) { this._readKey = key; this._readVal = readingOf(this.M.readout, net, X, mode); }
+    return this._readVal;
   }
   // phones and tablets (this.half) use the float16 copy when the export made one: half the download
   variant(name) {
@@ -629,7 +700,10 @@ class Engine {
       for (const d of [a, b]) { delete d._est; delete d._q; }
       compare = {without_labs: a, with_labs: b};
     }
-    return this.package_(X[0], r.est, r.spread, r.sal, age, mode, ms, inp, note, used, compare);
+    const out = this.package_(X[0], r.est, r.spread, r.sal, age, mode, ms, inp, note, used, compare);
+    try { const rd = await this.reading(X, mode); if (rd) out.ecg_reading = rd; }
+    catch (e) { if (e instanceof LockedError) throw e; out.ecg_reading_error = e && e.message ? e.message : String(e); }
+    return out;
   }
   async predict12(heaText, datBuf, age, sex, inp, fast) {
     const {cols, fs, names} = readWfdb16(heaText, datBuf);
@@ -720,6 +794,6 @@ async function openBytes(buf, key) {
 }
 
 root.NTEngine = {Engine, readWfdb16, readCsvColumn, preprocess, quality12, qualityMonitor, leadIssues, welch,
-  sosfiltfilt, resamplePoly, filtersFor, unpackNet, netRun, applyMode, finalTab, basics, cleanInputs, UserError,
+  sosfiltfilt, resamplePoly, filtersFor, unpackNet, netRun, unpackReadout, readoutRun, readingOf, applyMode, finalTab, basics, cleanInputs, UserError,
   pyRound, LEADS, INPUTS, N_OUT, LockedError, isSealed, keyFromHash, importKey, openBytes};
 })(typeof self !== "undefined" ? self : globalThis);
