@@ -18,7 +18,7 @@
 <script>
 /* Online version: the website's requests ("/health", "/predict/12lead", ...) are answered by the
    NT-Sense engine running in this browser (worker.js). Nothing is uploaded anywhere. */
-window.NT_PRIVATE = false; /*NT_PRIVATE*/
+window.NT_PRIVATE = true; /*NT_PRIVATE*/
 (function () {
   /* Private link: the key is after "#k=" (the browser never sends that part to any server).
      It is moved out of the address bar, so copying the address does not copy the key. */
