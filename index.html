@@ -2471,11 +2471,13 @@ function diseasePane(j){
   const all = Object.entries(M.diseases);
   const ok = all.filter(([, d]) => (d.auroc[mk] || 0) >= M.min_auroc).map(([k, d]) => {
     const g = dxRate(d.calib[mk], D.probs[k]);
-    return {k, d, g, r: g.rate / Math.max(d.prevalence, 1e-6)};
+    return {k, d, g, r: g.rate / Math.max(d.prevalence, 1e-6), pts: (g.rate - d.prevalence) * 100};
   }).sort((a, b) => b.g.rate - a.g.rate);
-  const lvl = r => r >= 1.5 ? ["dx-up", `×${r.toFixed(1)} the usual`] : r <= 0.67 ? ["dx-down", "lower than usual"] : ["dx-same", "about usual"];
-  const rows = ok.map(({d, g, r}) => {
-    const [c, t] = lvl(r), pc = Math.round(g.rate * 100), base = Math.round(d.prevalence * 100);
+  // raised: 1.5 times the usual OR 20 points above it (a common diagnosis, e.g. 93% vs 64%, cannot reach 1.5 times)
+  const up = o => o.r >= 1.5 || o.pts >= 20, down = o => o.r <= 0.67 || o.pts <= -20;
+  const lvl = o => up(o) ? ["dx-up", o.r >= 1.5 ? `×${o.r.toFixed(1)} the usual` : "higher than usual"] : down(o) ? ["dx-down", "lower than usual"] : ["dx-same", "about usual"];
+  const rows = ok.map(o => { const {d, g} = o;
+    const [c, t] = lvl(o), pc = Math.round(g.rate * 100), base = Math.round(d.prevalence * 100);
     const col = c === "dx-up" ? "var(--high)" : c === "dx-down" ? "var(--teal)" : "#C9B5B9";
     return `<div class="dx-row" title="AUROC ${d.auroc[mk].toFixed(3)} on test patients (age and sex alone: ${d.auroc_agesex.toFixed(3)})">
       <span class="nm">${esc(d.name)}<small>usual: ${base}% of test patients</small></span>
@@ -2483,7 +2485,7 @@ function diseasePane(j){
       <span class="pc">${pc}%</span><span class="lv ${c}">${t}</span></div>`;
   }).join("");
   const hidden = all.length - ok.length;
-  const top = ok.filter(o => o.r >= 1.5).sort((a, b) => b.r - a.r).slice(0, 3).map(o => `<b>${esc(o.d.name.replace(/ \(coded\)$/, ""))}</b>`);
+  const top = ok.filter(up).sort((a, b) => b.pts - a.pts).slice(0, 3).map(o => `<b>${esc(o.d.name.replace(/ \(coded\)$/, ""))}</b>`);
   const list = top.length < 2 ? top.join("") : top.slice(0, -1).join("; ") + " and " + top[top.length - 1];
   const lead = top.length ? `For this ECG, age and sex, the diagnos${top.length > 1 ? "es" : "is"} most raised above the usual: ${list}.`
                           : "No diagnosis is clearly raised above the usual for this ECG, age and sex.";
