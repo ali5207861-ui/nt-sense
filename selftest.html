@@ -51,6 +51,11 @@ function compare(o, x) {
       }
     }
   }
+  if (x.diseases) {                     // the diagnoses network (step 43 / 44)
+    const d = o.diseases;
+    if (!d) bad.push("diagnoses missing" + (o.diseases_error ? ": " + o.diseases_error : ""));
+    else for (const [k, v] of Object.entries(x.diseases)) if (Math.abs((d.probs[k] ?? -1) - v) > 0.02) bad.push(`diagnosis ${k} ${d.probs[k]} vs ${v}`);
+  }
   const qs = o.quality && o.quality.status;
   if (qs !== x.quality_status) bad.push(`quality ${qs} vs ${x.quality_status}`);
   // a 'side' or band can flip only when the value sits on a boundary: report, do not fail

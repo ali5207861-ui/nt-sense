@@ -944,6 +944,24 @@ dialog#evidence[open]{display:flex;flex-direction:column}
 .rd-pat svg{width:100%;height:44px;overflow:visible}
 .rd-none{color:var(--muted);font-size:14.5px;margin:8px 0 0}
 @media (max-width:700px){.rd-row{grid-template-columns:1fr 46px 74px;grid-template-areas:"nm pc lv" "bar bar bar"}.rd-pat{grid-template-columns:1fr}}
+
+/* ---- Diagnoses tab (step 43 / 44) */
+.dx-list{margin-top:10px}
+.dx-row{display:grid;grid-template-columns:minmax(170px,1.3fr) 2fr 56px 132px;grid-template-areas:"nm bar pc lv";gap:6px 14px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.dx-row:first-child{border-top:0}
+.dx-row .nm{grid-area:nm;font-size:15px;font-weight:600;color:var(--ink)}
+.dx-row .nm small{display:block;font-size:12.5px;font-weight:400;color:var(--muted)}
+.dx-row .track{grid-area:bar;position:relative;height:12px;border-radius:6px;background:#F1E8E9}
+.dx-row .track i{position:absolute;left:0;top:0;bottom:0;border-radius:6px}
+.dx-row .track b{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink2);border-radius:1px}
+.dx-row .pc{grid-area:pc;font:700 20px var(--num);text-align:right;color:var(--ink)}
+.dx-row .lv{grid-area:lv;font-size:12.5px;font-weight:700;border-radius:999px;padding:3px 9px;text-align:center;white-space:nowrap}
+.lv.dx-up{background:var(--high-soft);color:var(--high)}.lv.dx-same{background:#F1E8E9;color:var(--muted)}.lv.dx-down{background:var(--low-soft);color:var(--teal-deep)}
+.dx-key{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted);margin-top:10px}
+.dx-key span{display:inline-flex;align-items:center;gap:6px}
+.dx-key i{display:inline-block;width:18px;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--teal),#C9B5B9,var(--high))}
+.dx-key b{display:inline-block;width:2px;height:14px;background:var(--ink2)}
+@media (max-width:700px){.dx-row{grid-template-columns:1fr 50px;grid-template-areas:"nm pc" "bar bar" "lv lv"}.dx-row .lv{justify-self:start}}
 </style>
 <style>
 /* online version: download progress */
@@ -1110,9 +1128,10 @@ if (matchMedia("(max-width: 760px)").matches) document.documentElement.classList
     ecg: svg('<path d="M2 13h4l2-5 3 10 3-12 2 7h6"/>'),
     whatif: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
     cmp: svg('<path d="M9 3v6l-4 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-4-9V3M8 3h8"/>'),
-    read: svg('<path d="M4 5h16v14H4z"/><path d="M4 12h3l1.5-3 2.5 6 2-4 1 1h6"/>')
+    read: svg('<path d="M4 5h16v14H4z"/><path d="M4 12h3l1.5-3 2.5 6 2-4 1 1h6"/>'),
+    dis: svg('<path d="M9 4h6v5h5v6h-5v5H9v-5H4V9h5z"/>')
   };
-  const TABS = {"tab-res": ["Result", ICON.res], "tab-ecg": ["ECG", ICON.ecg], "tab-read": ["Reading", ICON.read], "tab-whatif": ["What if?", ICON.whatif], "tab-cmp": ["Blood tests", ICON.cmp]};
+  const TABS = {"tab-res": ["Result", ICON.res], "tab-ecg": ["ECG", ICON.ecg], "tab-read": ["Reading", ICON.read], "tab-dis": ["Diagnoses", ICON.dis], "tab-whatif": ["What if?", ICON.whatif], "tab-cmp": ["Blood tests", ICON.cmp]};
   const GO_HEART = '<svg viewBox="0 0 36 36" aria-hidden="true"><path d="M18 31.5S4.5 23.4 4.5 13.6C4.5 9.3 7.6 6.5 11.2 6.5c2.9 0 5.2 1.8 6.8 4 1.6-2.2 3.9-4 6.8-4 3.6 0 6.7 2.8 6.7 7.1C31.5 23.4 18 31.5 18 31.5z" fill="currentColor"/></svg>';
 
   function setView(res) {
@@ -1432,6 +1451,7 @@ if (matchMedia("(max-width: 760px)").matches) document.documentElement.classList
       <button type="button" role="tab" id="evt-cal" aria-controls="evp-cal" aria-selected="false" tabindex="-1">Estimate vs real</button>
       <button type="button" role="tab" id="evt-grp" aria-controls="evp-grp" aria-selected="false" tabindex="-1">Every group</button>
       <button type="button" role="tab" id="evt-pat" aria-controls="evp-pat" aria-selected="false" tabindex="-1">ECG patterns</button>
+      <button type="button" role="tab" id="evt-dis" aria-controls="evp-dis" aria-selected="false" tabindex="-1">Diagnoses</button>
       <button type="button" role="tab" id="evt-rng" aria-controls="evp-rng" aria-selected="false" tabindex="-1">Honest ranges</button>
       <button type="button" role="tab" id="evt-cut" aria-controls="evp-cut" aria-selected="false" tabindex="-1">Choose a cut-off</button>
       <button type="button" role="tab" id="evt-lim" aria-controls="evp-lim" aria-selected="false" tabindex="-1">Limits</button>
@@ -1797,6 +1817,7 @@ function render(j, age){
   const TABS = [["res", "Result", resultPane],
                 ["ecg", "Where the model looked", ecgPane]];
   if (j.ecg_reading) TABS.push(["read", "ECG reading", readingPane(j)]);
+  if (j.diseases) TABS.push(["dis", "Diagnoses", diseasePane(j)]);
   if (LASTREQ) TABS.push(["whatif", "What if?", whatIfPane(j)]);
   if (compareCard) TABS.push(["cmp", "With vs without blood tests", compareCard]);
   $("#results").innerHTML = `<div class="tabbar" role="tablist" aria-label="Result views"><span class="ink" aria-hidden="true"></span>${TABS.map(([id, name], i) =>
@@ -2439,6 +2460,42 @@ function readingPane(j){
       <p class="explain">Grey dot: median NT-proBNP of test patients without the pattern; coloured dot: with it. These are links seen in our test patients, not proof of cause. The named patterns explain about ${Math.round(M.explained_pct)}% of what the ECG adds to NT-Sense's estimate; the rest comes from waveform details that the machine report has no name for.</p></div>`;
 }
 
+// ---------------------------------------------------------------- Diagnoses tab (step 43 / 44)
+/** share of test ECGs with a similar score that had the diagnosis coded (calibration group of step 44) */
+function dxRate(cal, p){
+  for (const g of cal) if ((g.lo == null || p >= g.lo) && (g.hi == null || p < g.hi)) return g;
+  return cal[cal.length - 1];
+}
+function diseasePane(j){
+  const D = j.diseases, M = D.meta, mk = String(D.mode), mon = D.mode === 1;
+  const all = Object.entries(M.diseases);
+  const ok = all.filter(([, d]) => (d.auroc[mk] || 0) >= M.min_auroc).map(([k, d]) => {
+    const g = dxRate(d.calib[mk], D.probs[k]);
+    return {k, d, g, r: g.rate / Math.max(d.prevalence, 1e-6)};
+  }).sort((a, b) => b.g.rate - a.g.rate);
+  const lvl = r => r >= 1.5 ? ["dx-up", `×${r.toFixed(1)} the usual`] : r <= 0.67 ? ["dx-down", "lower than usual"] : ["dx-same", "about usual"];
+  const rows = ok.map(({d, g, r}) => {
+    const [c, t] = lvl(r), pc = Math.round(g.rate * 100), base = Math.round(d.prevalence * 100);
+    const col = c === "dx-up" ? "var(--high)" : c === "dx-down" ? "var(--teal)" : "#C9B5B9";
+    return `<div class="dx-row" title="AUROC ${d.auroc[mk].toFixed(3)} on test patients (age and sex alone: ${d.auroc_agesex.toFixed(3)})">
+      <span class="nm">${esc(d.name)}<small>usual: ${base}% of test patients</small></span>
+      <div class="track" role="img" aria-label="${pc}% of similar test patients, against ${base}% of all test patients"><i style="width:${Math.max(2, pc)}%;background:${col}"></i><b style="left:calc(${base}% - 1px)"></b></div>
+      <span class="pc">${pc}%</span><span class="lv ${c}">${t}</span></div>`;
+  }).join("");
+  const hidden = all.length - ok.length;
+  const top = ok.filter(o => o.r >= 1.5).sort((a, b) => b.r - a.r).slice(0, 3).map(o => `<b>${esc(o.d.name.replace(/ \(coded\)$/, ""))}</b>`);
+  const list = top.length < 2 ? top.join("") : top.slice(0, -1).join("; ") + " and " + top[top.length - 1];
+  const lead = top.length ? `For this ECG, age and sex, the diagnos${top.length > 1 ? "es" : "is"} most raised above the usual: ${list}.`
+                          : "No diagnosis is clearly raised above the usual for this ECG, age and sex.";
+  return `<div class="card"><h2>Diagnoses the hospital may record</h2>
+      <p class="explain" style="margin-top:2px">${lead} ${mon ? `Lead II, ${D.n_windows} ten-second window${D.n_windows > 1 ? "s" : ""}.` : "The 12-lead ECG."}</p>
+      <div class="dx-list">${rows}</div>
+      <div class="dx-key"><span><i></i>test patients with a similar score who had it</span><span><b></b>all test patients</span></div>
+      <p class="explain">How to read a row: among the ${M.n_test_ecgs.toLocaleString("en-US")} test ECGs (patients the network never saw), those with a score like this one had the diagnosis recorded at discharge this often. Shown: diagnoses read well ${mon ? "from lead II alone" : "from 12 leads"} (AUROC ${M.min_auroc.toFixed(2)} or more).${hidden ? ` ${hidden} other${hidden > 1 ? "s are" : " is"} hidden in this mode because ${hidden > 1 ? "they are" : "it is"} read less reliably.` : ""}</p></div>
+    <div class="card"><h2>What this is, and what it is not</h2>
+      <p class="explain" style="margin-top:2px">A second network reads the same ECG, with age and sex, and learned which diagnoses hospitals coded at the end of the stay in which an ECG was recorded. It points to what to look for; it does not diagnose. Heart failure, for example, still needs an echocardiogram and the NT-proBNP result. The test patients all had an NT-proBNP test, so they are sicker than average: the usual rates above are for that group.</p></div>`;
+}
+
 function whatIfPane(j){
   const given = k => { const e = LASTREQ.entries.find(([n]) => n === k); return e ? +e[1] : null; };
   const sex = given("sex_male");
@@ -2856,7 +2913,7 @@ function renderEvidence(){
   const M = EV.models;
   $("#ev-sub").textContent = `${EV.n_tests.toLocaleString("en-US")} tests from ${EV.n_patients.toLocaleString("en-US")} patients the model never saw during training.`;
   body.innerHTML = [
-    ["acc", accuracyPane()], ["cal", `<div id="cal-host"></div>`], ["grp", groupsPane()], ["pat", patternsPane()],
+    ["acc", accuracyPane()], ["cal", `<div id="cal-host"></div>`], ["grp", groupsPane()], ["pat", patternsPane()], ["dis", diseaseEvPane()],
     ["rng", rangesPane()], ["cut", `<div id="cut-host"></div>`], ["lim", limitsPane()]
   ].map(([id, h], i) => `<div class="ev-pane" id="evp-${id}" role="tabpanel" aria-labelledby="evt-${id}" ${i ? "hidden" : ""}>${h}</div>`).join("");
   drawCal(); drawCut(); attachRoc();
@@ -3018,6 +3075,43 @@ function forestLog(groups, ticks, tipOf){
   axis += `<line x1="${X(1)}" x2="${X(1)}" y1="20" y2="${y}" stroke="#55393E" stroke-dasharray="4 3"/>`;
   return `<svg viewBox="0 0 ${W} ${y + 6}" role="img">${axis}${rows}</svg>`;
 }
+// ---------- diagnoses (step 43 / 44)
+function diseaseEvPane(){
+  const P = EV.disease;
+  if (!P || !P.diseases) return `<div class="ev-empty"><h3>No diagnosis results yet</h3><p>Run these once on the computer with the results, then open this page again:</p>
+    <p><code>python src\\step43_disease_model.py</code><br><code>python src\\step44_export_disease.py</code></p></div>`;
+  const ds = Object.values(P.diseases).sort((a, b) => b.auroc["0"] - a.auroc["0"]);
+  const W = 780, L = 250, R = 20, rowH = 30, top = 34, lo = 0.5, hi = 1;
+  const X = v => L + (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo) * (W - L - R);
+  const S = [["auroc_agesex", "ci_agesex", "#C07A00", "Age and sex alone"], ["1", null, "#9B1B2E", "Lead II + age, sex"], ["0", null, "#0B8C80", "12-lead + age, sex"]];
+  const val = (d, s) => s[1] ? [d[s[0]], d[s[1]]] : [d.auroc[s[0]], d.ci[s[0]]];
+  let y = top, rows = "";
+  for (const d of ds) {
+    const cy = y + rowH / 2, a = d.auroc_agesex, e = d.auroc["0"];
+    rows += `<text x="0" y="${cy + 4}" style="fill:var(--ink2);font-size:13px">${esc(d.name)}</text>
+      <line x1="${X(a)}" x2="${X(e)}" y1="${cy}" y2="${cy}" stroke="#D6C2C5" stroke-width="3"/>`;
+    S.forEach((s, i) => { const [v, ci] = val(d, s), off = (i - 1) * 5;
+      rows += `<line x1="${X(ci[0])}" x2="${X(ci[1])}" y1="${cy + off}" y2="${cy + off}" stroke="${s[2]}" stroke-opacity=".45" stroke-width="2"/>
+        <circle cx="${X(v)}" cy="${cy + off}" r="5" fill="${s[2]}" stroke="#fff" stroke-width="1.5"/>`; });
+    rows += `<rect x="0" y="${y}" width="${W}" height="${rowH}" fill="transparent" data-tip="<b>${esc(d.name)}</b><br>12-lead ${e.toFixed(3)} (95% CI ${d.ci["0"][0]} to ${d.ci["0"][1]})<br>lead II ${d.auroc["1"].toFixed(3)} (95% CI ${d.ci["1"][0]} to ${d.ci["1"][1]})<br>age and sex alone ${a.toFixed(3)}<br>coded in ${Math.round(d.prevalence * 100)}% of test ECGs"/>`;
+    y += rowH;
+  }
+  let axis = "";
+  for (const v of [0.5, 0.6, 0.7, 0.8, 0.9, 1]) axis += `<line class="gr" x1="${X(v)}" x2="${X(v)}" y1="22" y2="${y}"/><text x="${X(v)}" y="14" text-anchor="middle">${v.toFixed(1)}</text>`;
+  axis += `<line x1="${X(P.min_auroc)}" x2="${X(P.min_auroc)}" y1="22" y2="${y}" stroke="#55393E" stroke-dasharray="4 3"/>`;
+  const key = S.slice().reverse().map(s => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><i style="width:10px;height:10px;border-radius:50%;background:${s[2]};display:inline-block"></i>${s[3]}</span>`).join("");
+  const best = ds.slice().sort((a, b) => b.gain - a.gain)[0];
+  const f3 = v => v.toFixed(3);
+  return `<div class="card"><h3>Which diagnoses the ECG can point to</h3>
+      <p class="ev-note" style="margin-top:0">AUROC on ${P.n_test_ecgs.toLocaleString("en-US")} test ECGs from ${P.n_test_patients.toLocaleString("en-US")} patients the network never saw. The orange dot uses only age and sex; the gap to the turquoise dot is what the ECG adds. Largest gain: ${esc(best.name)} (+${f3(best.gain)}). Dashed line: AUROC ${P.min_auroc.toFixed(2)}, the least needed to appear on the result page. Move over a row for the numbers.</p>
+      <div class="ev-chart forest"><svg viewBox="0 0 ${W} ${y + 6}" role="img" aria-label="AUROC per diagnosis">${axis}${rows}</svg></div>
+      <p class="ev-note">${key}</p></div>
+    <div class="card"><h3>Where the labels come from</h3>
+      <p class="ev-note" style="margin-top:0">${esc(P.source)}. An ECG belongs to a stay if it was recorded from 12 hours before admission (emergency department) until discharge. The network starts from the NT-Sense pretrained encoder and learned from ECGs of other patients; no test patient was used in training. Codes miss some cases and include some that were only suspected, so these labels are noisier than an echocardiogram.</p>
+      <details class="ev-table"><summary>All numbers</summary><table><tr><th>Diagnosis</th><th>Coded in</th><th>12-lead</th><th>Lead II</th><th>Age + sex</th><th>ECG gain</th></tr>
+        ${ds.map(d => `<tr><td>${esc(d.name)}</td><td>${Math.round(d.prevalence * 100)}%</td><td>${f3(d.auroc["0"])}</td><td>${f3(d.auroc["1"])}</td><td>${f3(d.auroc_agesex)}</td><td>+${f3(d.gain)}</td></tr>`).join("")}</table></details></div>`;
+}
+
 function patternsPane(){
   const P = EV.reading;
   if (!P || !P.patterns) return `<div class="ev-empty"><h3>No ECG pattern results yet</h3><p>Run these once on the computer with the results, then open this page again:</p>

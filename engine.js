@@ -419,18 +419,18 @@ function netRun(net, x, tab, mode, wantGrad, zc) {
 }
 // ---------------------------------------------------------------- ECG reading (step 30 pretraining network)
 /** Same encoder as the NT-proBNP networks, then a 129 -> 128 -> nOut head (findings, then measurements). */
-function unpackReadout(buf, nOut, dtype) {
+function unpackReadout(buf, nOut, dtype, nIn = 129) {
   const f = dtype === "f16" ? f16ToF32(buf) : new Float32Array(buf); let p = 0;
   const take = n => { const a = f.subarray(p, p + n); p += n; return a; };
   const conv = (cin, cout, k, s, pad) => ({cin, cout, k, s, pad, w: take(cout * cin * k), b: take(cout)});
   const [ci, co, k, s, pad] = ARCH.stem;
-  const net = {stem: conv(ci, co, k, s, pad), blocks: [], nOut};
+  const net = {stem: conv(ci, co, k, s, pad), blocks: [], nOut, nIn};
   for (const [a, b, st] of ARCH.blocks) {
     const blk = {A: conv(a, b, 7, st, 3), B: conv(b, b, 7, 1, 3), skip: null};
     if (!(st === 1 && a === b)) blk.skip = conv(a, b, 1, st, 0);
     net.blocks.push(blk);
   }
-  net.W1 = take(128 * 129); net.b1 = take(128); net.W2 = take(nOut * 128); net.b2 = take(nOut);
+  net.W1 = take(128 * nIn); net.b1 = take(128); net.W2 = take(nOut * 128); net.b2 = take(nOut);
   if (p !== f.length) throw new Error(`reading network file has ${f.length} numbers, expected ${p}`);
   return net;
 }
@@ -448,11 +448,12 @@ function encodeOnly(net, x) {
   for (let c = 0; c < 128; c++) { let s = 0; for (let l = 0; l < Lh; l++) s += h[c * Lh + l]; z[c] = s / Lh; }
   return z;
 }
-function readoutRun(net, x, mode) {
-  const z = encodeOnly(net, x), feat = new Float64Array(129);
-  feat.set(z); feat[128] = mode;
+/** tab (diagnoses network only): [age scaled, sex], placed between the 128 features and the mode bit */
+function readoutRun(net, x, mode, tab) {
+  const nIn = net.nIn || 129, z = encodeOnly(net, x), feat = new Float64Array(nIn);
+  feat.set(z); if (tab) feat.set(tab, 128); feat[nIn - 1] = mode;
   const hid = new Float64Array(128);
-  for (let j = 0; j < 128; j++) { let s = net.b1[j]; for (let i = 0; i < 129; i++) s += net.W1[j * 129 + i] * feat[i]; hid[j] = s > 0 ? s : 0; }
+  for (let j = 0; j < 128; j++) { let s = net.b1[j]; for (let i = 0; i < nIn; i++) s += net.W1[j * nIn + i] * feat[i]; hid[j] = s > 0 ? s : 0; }
   const out = new Float64Array(net.nOut);
   for (let k = 0; k < net.nOut; k++) { let s = net.b2[k]; for (let j = 0; j < 128; j++) s += net.W2[k * 128 + j] * hid[j]; out[k] = s; }
   return out;
@@ -468,6 +469,14 @@ function readingOf(R, net, X, mode) {
   for (const ax of ["qrs_axis", "t_axis"])
     meas[ax] = pyRound(Math.atan2(mean(col[ax + "_sin"]), mean(col[ax + "_cos"])) * 180 / Math.PI, 1);
   return {mode, n_windows: X.length, probs, meas, meta: R.meta};
+}
+/** Diagnoses (step 43): chance of each being coded at discharge, mean over windows. As step18 _diseases. */
+function diseaseTab(D, age, sex) { return [(clip(age, 18, 100) - D.age_mu) / D.age_sd, Number(sex)]; }
+function diseasesOf(D, net, X, mode, age, sex) {
+  const tab = diseaseTab(D, age, sex), probs = {};
+  const outs = X.map(x => readoutRun(net, applyMode(x, mode), mode, tab));
+  D.labels.forEach((k, j) => { probs[k] = pyRound(mean(outs.map(o => 1 / (1 + Math.exp(-o[j])))), 3); });
+  return {mode, n_windows: X.length, probs, meta: D.meta};
 }
 function applyMode(x, mode) {
   if (mode !== 1) return x;
@@ -550,6 +559,25 @@ class Engine {
         .catch(e => { this._readout = null; throw e; });
     }
     return this._readout;
+  }
+  /** the diagnoses network (manifest.disease, made by step 44 + step 39); null when not exported */
+  diseaseNet() {
+    const D = this.M.disease;
+    if (!D) return Promise.resolve(null);
+    if (!this._disease) {
+      const half = this.half && D.file_f16;
+      this._disease = this.load("model/" + (half ? D.file_f16 : D.file))
+        .then(buf => unpackReadout(buf, D.n_out, half ? "f16" : "f32", 131))
+        .catch(e => { this._disease = null; throw e; });
+    }
+    return this._disease;
+  }
+  async diseases(X, mode, age, sex) {
+    const net = await this.diseaseNet();
+    if (!net) return null;
+    const key = mode + ":" + age + ":" + sex + ":" + (this._key || "");
+    if (this._disKey !== key) { this._disKey = key; this._disVal = diseasesOf(this.M.disease, net, X, mode, age, sex); }
+    return this._disVal;
   }
   async reading(X, mode) {
     const net = await this.readoutNet();
@@ -703,6 +731,8 @@ class Engine {
     const out = this.package_(X[0], r.est, r.spread, r.sal, age, mode, ms, inp, note, used, compare);
     try { const rd = await this.reading(X, mode); if (rd) out.ecg_reading = rd; }
     catch (e) { if (e instanceof LockedError) throw e; out.ecg_reading_error = e && e.message ? e.message : String(e); }
+    try { const ds = await this.diseases(X, mode, age, sex); if (ds) out.diseases = ds; }
+    catch (e) { if (e instanceof LockedError) throw e; out.diseases_error = e && e.message ? e.message : String(e); }
     return out;
   }
   async predict12(heaText, datBuf, age, sex, inp, fast) {
@@ -794,6 +824,6 @@ async function openBytes(buf, key) {
 }
 
 root.NTEngine = {Engine, readWfdb16, readCsvColumn, preprocess, quality12, qualityMonitor, leadIssues, welch,
-  sosfiltfilt, resamplePoly, filtersFor, unpackNet, netRun, unpackReadout, readoutRun, readingOf, applyMode, finalTab, basics, cleanInputs, UserError,
+  sosfiltfilt, resamplePoly, filtersFor, unpackNet, netRun, unpackReadout, readoutRun, readingOf, diseasesOf, applyMode, finalTab, basics, cleanInputs, UserError,
   pyRound, LEADS, INPUTS, N_OUT, LockedError, isSealed, keyFromHash, importKey, openBytes};
 })(typeof self !== "undefined" ? self : globalThis);

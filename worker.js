@@ -88,7 +88,8 @@ async function init() {
   engine.half = half;
   engine.remote = makeHelpers();
   prog.total = Object.keys(manifest.sets).reduce((n, k) => n + (manifest.sets[k] ? engine.variant(k)[0].length : 0), 0)
-             + (manifest.readout ? 1 : 0);                 // + the ECG-reading network
+             + (manifest.readout ? 1 : 0)                  // + the ECG-reading network
+             + (manifest.disease ? 1 : 0);                 // + the diagnoses network
 }
 
 self.onmessage = async (ev) => {
@@ -103,7 +104,7 @@ self.onmessage = async (ev) => {
     if (kind === "health") out = engine.health();
     else if (kind === "warm") {
       await engine.set("base");                           // base first: the first result needs it
-      await Promise.all([engine.hasFinal && engine.set("final"), engine.readoutNet()]);
+      await Promise.all([engine.hasFinal && engine.set("final"), engine.readoutNet(), engine.diseaseNet()]);
       out = {ok: true};
     }
     else if (kind === "12lead") {
