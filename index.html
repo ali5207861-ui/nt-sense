@@ -1431,6 +1431,7 @@ if (matchMedia("(max-width: 760px)").matches) document.documentElement.classList
       <button type="button" role="tab" id="evt-acc" aria-controls="evp-acc" aria-selected="true">Accuracy</button>
       <button type="button" role="tab" id="evt-cal" aria-controls="evp-cal" aria-selected="false" tabindex="-1">Estimate vs real</button>
       <button type="button" role="tab" id="evt-grp" aria-controls="evp-grp" aria-selected="false" tabindex="-1">Every group</button>
+      <button type="button" role="tab" id="evt-pat" aria-controls="evp-pat" aria-selected="false" tabindex="-1">ECG patterns</button>
       <button type="button" role="tab" id="evt-rng" aria-controls="evp-rng" aria-selected="false" tabindex="-1">Honest ranges</button>
       <button type="button" role="tab" id="evt-cut" aria-controls="evp-cut" aria-selected="false" tabindex="-1">Choose a cut-off</button>
       <button type="button" role="tab" id="evt-lim" aria-controls="evp-lim" aria-selected="false" tabindex="-1">Limits</button>
@@ -2855,7 +2856,7 @@ function renderEvidence(){
   const M = EV.models;
   $("#ev-sub").textContent = `${EV.n_tests.toLocaleString("en-US")} tests from ${EV.n_patients.toLocaleString("en-US")} patients the model never saw during training.`;
   body.innerHTML = [
-    ["acc", accuracyPane()], ["cal", `<div id="cal-host"></div>`], ["grp", groupsPane()],
+    ["acc", accuracyPane()], ["cal", `<div id="cal-host"></div>`], ["grp", groupsPane()], ["pat", patternsPane()],
     ["rng", rangesPane()], ["cut", `<div id="cut-host"></div>`], ["lim", limitsPane()]
   ].map(([id, h], i) => `<div class="ev-pane" id="evp-${id}" role="tabpanel" aria-labelledby="evt-${id}" ${i ? "hidden" : ""}>${h}</div>`).join("");
   drawCal(); drawCut(); attachRoc();
@@ -2982,6 +2983,76 @@ function drawCal(){
 }
 
 // ---------- groups
+// ---------- ECG patterns (step 41 / 42)
+function patLabel(p){
+  if (!p.band) return p.label;
+  const S = {hr: ["Heart rate", "bpm"], qrs: ["QRS", "ms"], qtc: ["QTc", "ms"], pr: ["PR", "ms"]}[p.key] || [p.key, ""];
+  const t = (b, u) => b[1] == null ? `≥ ${b[0]} ${u}` : b[0] <= 0 ? `< ${b[1]} ${u}` : `${b[0]}–${b[1] - 1} ${u}`;
+  return `${S[0]} ${t(p.band, S[1])} (vs ${t(p.ref, S[1])})`;
+}
+function perSd(s){
+  const m = /^(.*?) \((ms|bpm)\), per 1 SD \(\+(\d+)\)$/.exec(s);
+  return m ? `${{"Heart rate": "Heart rate", "QRS duration": "QRS", "PR interval": "PR", "QTc": "QTc"}[m[1]] || m[1]}, per +${m[3]} ${m[2]}` : s;
+}
+function forestLog(groups, ticks, tipOf){
+  const W = 780, L = 260, R = 64, rowH = 28, head = 30;
+  const lo = Math.log10(ticks[0]), hi = Math.log10(ticks[ticks.length - 1]);
+  const X = v => L + (Math.log10(Math.min(Math.max(v, ticks[0]), ticks[ticks.length - 1])) - lo) / (hi - lo) * (W - L - R);
+  let y = 28, rows = "";
+  for (const [name, items] of groups) {
+    if (!items.length) continue;
+    rows += `<text x="0" y="${y + 18}" style="font-weight:700;fill:var(--ink);font-size:13px">${esc(name)}</text>`; y += head;
+    for (const it of items) {
+      const c = it.ci[0] > 1 ? "#9B1B2E" : it.ci[1] < 1 ? "#0B8C80" : "#A8979A", cy = y + rowH / 2;
+      rows += `<text x="14" y="${cy + 4}" style="fill:var(--ink2);font-size:13px">${esc(it.name)}</text>
+        <line x1="${X(it.ci[0])}" x2="${X(it.ci[1])}" y1="${cy}" y2="${cy}" stroke="${c}" stroke-opacity=".6" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="${X(it.v)}" cy="${cy}" r="5.5" fill="${c}" stroke="#fff" stroke-width="1.5"/>
+        <text x="${W - 4}" y="${cy + 4}" text-anchor="end" style="font-size:12.5px;font-weight:700;fill:${c === "#A8979A" ? "var(--muted)" : c}">×${+it.v.toFixed(2)}</text>
+        <rect x="0" y="${y}" width="${W}" height="${rowH}" fill="transparent" data-tip="${tipOf(it).replace(/"/g, "&quot;")}"/>`;
+      y += rowH;
+    }
+    y += 6;
+  }
+  let axis = "";
+  for (const v of ticks) axis += `<line class="gr" x1="${X(v)}" x2="${X(v)}" y1="20" y2="${y}"/><text x="${X(v)}" y="14" text-anchor="middle">×${v}</text>`;
+  axis += `<line x1="${X(1)}" x2="${X(1)}" y1="20" y2="${y}" stroke="#55393E" stroke-dasharray="4 3"/>`;
+  return `<svg viewBox="0 0 ${W} ${y + 6}" role="img">${axis}${rows}</svg>`;
+}
+function patternsPane(){
+  const P = EV.reading;
+  if (!P || !P.patterns) return `<div class="ev-empty"><h3>No ECG pattern results yet</h3><p>Run these once on the computer with the results, then open this page again:</p>
+    <p><code>python src\\step41_ecg_readout.py</code><br><code>python src\\step42_export_readout.py</code></p></div>`;
+  const it = p => ({name: patLabel(p), v: p.ratio, ci: p.ci, p});
+  const overall = P.patterns.filter(p => p.key === "dx_abnormal" || p.key === "dx_normal").map(it);
+  const meas = P.patterns.filter(p => p.band).map(it).sort((a, b) => b.v - a.v);
+  const find = P.patterns.filter(p => !p.band && p.key !== "dx_abnormal" && p.key !== "dx_normal").map(it).sort((a, b) => b.v - a.v);
+  const tipA = x => `<b>${esc(x.name)}</b><br>median NT-proBNP ${x.p.median_with.toLocaleString("en-US")} pg/mL with, ${x.p.median_without.toLocaleString("en-US")} without<br>${x.p.n_with.toLocaleString("en-US")} tests with it · ratio ×${x.v} (95% CI ${x.ci[0]} to ${x.ci[1]})`;
+  const top = [...meas, ...find].filter(x => x.ci[0] > 1).slice(0, 3).map(x => `${esc(x.name)} (×${x.v})`).join(", ");
+  let cardB = "";
+  if (P.contribution && P.contribution.length) {
+    const C = P.contribution.map(c => ({name: perSd(c.label), v: c.factor, ci: c.ci}));
+    const cm = C.filter(c => /per \+/.test(c.name)), cf = C.filter(c => !/per \+/.test(c.name));
+    cardB = `<div class="card"><h3>Which ECG patterns NT-Sense uses</h3>
+      <p class="ev-note" style="margin-top:0">How much each pattern moves NT-Sense's estimate once the blood tests and history are already known: the ECG's own contribution. These named patterns explain about <strong>${Math.round(P.explained_pct)}%</strong> of what the ECG adds; the rest comes from waveform details that the machine report has no name for.</p>
+      <div class="ev-chart forest">${forestLog([["ECG findings", cf], ["Measurements", cm]], [0.8, 0.9, 1, 1.25, 1.5, 1.75], x => `<b>${esc(x.name)}</b><br>moves the estimate ×${x.v} (95% CI ${x.ci[0]} to ${x.ci[1]})`)}</div></div>`;
+  }
+  const F = Object.entries(P.findings).sort((a, b) => (b[1].auroc["0"] || 0) - (a[1].auroc["0"] || 0));
+  const au = v => v == null ? "–" : `<span style="${v >= P.min_auroc ? "font-weight:700;color:var(--ink)" : "color:var(--muted)"}">${v.toFixed(3)}</span>`;
+  const Ms = Object.values(P.measurements);
+  return `<div class="card"><h3>Which ECG patterns go with a high NT-proBNP</h3>
+      <p class="ev-note" style="margin-top:0">Median NT-proBNP of test patients with each pattern, divided by the median of those without it. Red: clearly higher. Turquoise: clearly lower. Grey: not clear (the 95% CI crosses ×1). Strongest: ${top}. Move over a row for the medians.</p>
+      <div class="ev-chart forest">${forestLog([["Overall machine reading", overall], ["Measurements", meas], ["ECG findings", find]], [0.1, 0.2, 0.5, 1, 2, 5, 10], tipA)}</div>
+      <p class="ev-note">These are links seen in our test patients, not proof of cause: sicker patients often have several of these patterns at once. Groups with fewer than 20 tests are not shown.</p></div>
+    ${cardB}
+    <div class="card"><h3>How well the network reads the ECG</h3>
+      <p class="ev-note" style="margin-top:0">Checked against the ECG machine's own automatic report on the test patients. A finding is shown in the "ECG reading" tab only where its AUROC is ${P.min_auroc.toFixed(2)} or more (bold).</p>
+      <details class="ev-table" open><summary>Findings (AUROC)</summary><table><tr><th>Finding</th><th>12-lead</th><th>Lead II only</th></tr>
+        ${F.map(([, f]) => `<tr><td>${esc(f.name)}</td><td>${au(f.auroc["0"])}</td><td>${au(f.auroc["1"])}</td></tr>`).join("")}</table></details>
+      <details class="ev-table"><summary>Measurements (usual error)</summary><table><tr><th>Measurement</th><th>12-lead</th><th>Lead II only</th></tr>
+        ${Ms.map(m => `<tr><td>${esc(m.name)}</td><td>±${m.error["0"]} ${m.unit}</td><td>${m.lead2 ? `±${m.error["1"]} ${m.unit}` : "not shown (needs several leads)"}</td></tr>`).join("")}</table></details>
+    </div>`;
+}
+
 function groupsPane(){
   const G = EV.groups; if (!G || !G.length) return `<div class="ev-empty">No group results in the evidence file.</div>`;
   const ms = ["12-lead", "lead II"].filter(m => G[0][m]);
